@@ -28,16 +28,17 @@ echo "ok"
 echo "== 2/6 python venv =="
 if [ ! -d .venv ]; then
   "$PY" -m venv .venv
-  FRESH_VENV=1
-else
-  echo "exists, skipping"
 fi
 # venv layout differs per OS: .venv/bin (mac/linux) vs .venv/Scripts (windows)
 if [ -d .venv/bin ]; then VBIN=.venv/bin; else VBIN=.venv/Scripts; fi
-if [ "${FRESH_VENV:-0}" = 1 ]; then
-  "$VBIN/pip" install -q --upgrade pip
-  "$VBIN/pip" install -q -r requirements.txt
+# marker file: a failed pip install must not look "done" on re-run
+if [ ! -f .venv/.ansai-installed ]; then
+  "$VBIN/python" -m pip install -q --upgrade pip
+  "$VBIN/python" -m pip install -q -r requirements.txt
+  touch .venv/.ansai-installed
   echo "installed"
+else
+  echo "exists, skipping"
 fi
 
 echo "== 3/6 gateway env =="
