@@ -64,7 +64,10 @@ echo "== 4/6 gateway up =="
 (cd gateway && docker compose up -d)
 echo -n "waiting for gateway health"
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:4000/health >/dev/null 2>&1; then echo " ok"; break; fi
+  # NOTE: litellm >= ~1.80 requires the master key even on /health (401
+  # without it), so the probe must authenticate — an unauthenticated curl
+  # never succeeds and the wait loop would time out on a healthy gateway.
+  if curl -sf -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-ansai-dev-local}" http://localhost:4000/health >/dev/null 2>&1; then echo " ok"; break; fi
   echo -n "."; sleep 2
   if [ "$i" = 30 ]; then echo ""; echo "gateway did not become healthy; check: (cd gateway && docker compose logs)"; exit 1; fi
 done
