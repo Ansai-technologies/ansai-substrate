@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ansai Office — live agent floor</title>
+<style>
+  :root{
+    --bg:#faf8f4; --card:#ffffff; --ink:#2b2620; --muted:#8a8177;
+    --line:#e9e2d6; --accent:#4f46e5; --radius:14px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,sans-serif;}
+  header{display:flex;align-items:center;gap:10px;padding:14px 20px;
+    background:var(--card);border-bottom:1px solid var(--line);}
+  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:-.01em}
+  header p{margin:2px 0 0;font-size:12px;color:var(--muted)}
+  #conn{width:9px;height:9px;border-radius:50%;background:#d6cfc2;margin-left:auto}
+  #conn.live{background:#22c55e}
+  main{display:flex;gap:16px;padding:16px;max-width:1280px;margin:0 auto;
+    align-items:flex-start}
+  #stage{flex:1;min-width:0;background:var(--card);border:1px solid var(--line);
+    border-radius:var(--radius);overflow:hidden;box-shadow:0 2px 12px rgba(60,50,30,.05)}
+  canvas{display:block;width:100%;height:auto}
+  aside{width:320px;flex-shrink:0;display:flex;flex-direction:column;gap:12px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:12px 14px;box-shadow:0 2px 12px rgba(60,50,30,.05)}
+  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);margin:0 0 10px}
+  .agent{display:flex;gap:10px;align-items:center;padding:8px 0;
+    border-top:1px solid var(--line)}
+  .agent:first-of-type{border-top:none}
+  .dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+  .agent .who{flex:1;min-width:0}
+  .agent .who b{font-size:13.5px;display:block}
+  .agent .who span{font-size:11.5px;color:var(--muted);display:block;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pill{font-size:10.5px;padding:3px 9px;border-radius:999px;font-weight:600;
+    text-transform:capitalize;flex-shrink:0}
+  .pill.idle{background:#eef2ff;color:#4f46e5}
+  .pill.working{background:#e0f2fe;color:#0369a1}
+  .pill.thinking{background:#fef3c7;color:#92400e}
+  .pill.error{background:#fee2e2;color:#b91c1c}
+  #chatlog{height:190px;overflow-y:auto;display:flex;flex-direction:column;
+    gap:8px;margin-bottom:10px}
+  .msg{font-size:13px;line-height:1.45;padding:8px 11px;border-radius:12px;
+    max-width:92%;word-wrap:break-word}
+  .msg.you{background:#eef2ff;align-self:flex-end;border-bottom-right-radius:4px}
+  .msg.them{background:#f4f1ea;align-self:flex-start;border-bottom-left-radius:4px}
+  .msg.them b{color:var(--accent);font-size:11px;display:block;margin-bottom:2px}
+  #who{display:flex;gap:6px;margin-bottom:10px}
+  #who button{flex:1;border:1px solid var(--line);background:#fff;border-radius:9px;
+    padding:6px 4px;font-size:11.5px;cursor:pointer;color:var(--muted)}
+  #who button.on{border-color:var(--accent);color:var(--accent);font-weight:650;
+    background:#eef2ff}
+  #chatrow{display:flex;gap:8px}
+  #chatin{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 11px;
+    font-size:13px;font-family:inherit}
+  #chatin:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  #send{border:none;background:var(--accent);color:#fff;border-radius:10px;
+    padding:0 16px;font-size:13px;font-weight:600;cursor:pointer}
+  #send:disabled{opacity:.5}
+  .hint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
+  @media (max-width:900px){main{flex-direction:column}aside{width:100%}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Ansai Office</h1>
+    <p>the Baraza, live — what each agent is doing, right now</p>
+  </div>
+  <div id="conn" title="event stream"></div>
+</header>
+<main>
+  <div id="stage"><canvas id="cv" width="960" height="620"></canvas></div>
+  <aside>
+    <div class="card">
+      <h2>Agents</h2>
+      <div id="agents"></div>
+    </div>
+    <div class="card">
+      <h2>Chat</h2>
+      <div id="who"></div>
+      <div id="chatlog"></div>
+      <div id="chatrow">
+        <input id="chatin" placeholder="Ask this agent…" maxlength="500" autocomplete="off">
+        <button id="send">Send</button>
+      </div>
+      <div class="hint">Text-only chat: agents answer, they can't run tools,
+        move money, or send anything from here.</div>
+    </div>
+  </aside>
+</main>
+<script>
+"use strict";
+/* ---------- roster (mirrors office/server.py AGENTS) ---------- */
+const ROSTER = {
+  "tangaza":       {name:"Tangaza",       color:"#4f46e5"},
+  "mhandisi-mkuu": {name:"Mhandisi Mkuu", color:"#0d9488"},
+  "kiongozi":      {name:"Kiongozi",      color:"#b45309"},
+};
+const HOME = {  // desk chair positions + whiteboard spot (canvas 960x620)
+  "tangaza":       {x:210, y:540, desk:{x:120,y:400,w:180,h:90}},
+  "mhandisi-mkuu": {x:750, y:540, desk:{x:660,y:400,w:180,h:90}},
+  "kiongozi":      {x:480, y:250},
+};
+const chars = {};
+for (const id of Object.keys(ROSTER)) {
+  chars[id] = {id, x:HOME[id].x, y:HOME[id].y, tx:HOME[id].x, ty:HOME[id].y,
+    state:"idle", activity:"waiting", wanderT:0, bob:Math.random()*6.28, shake:0};
+}
+let currentChat = "tangaza";
+
+/* ---------- canvas ---------- */
+const cv = document.getElementById("cv"), ctx = cv.getContext("2d");
+function rr(x,y,w,h,r){ctx.beginPath();ctx.roundRect(x,y,w,h,r);}
+function drawRoom(){
+  ctx.fillStyle="#f6f3ec"; ctx.fillRect(0,0,960,620);
+  ctx.fillStyle="#efe9dd";
+  for(let x=20;x<960;x+=44) for(let y=20;y<620;y+=44){
+    ctx.beginPath();ctx.arc(x,y,1.6,0,7);ctx.fill();}
+  // rug
+  ctx.fillStyle="#f1ece1"; rr(330,330,300,180,26); ctx.fill();
+  // whiteboard zone (Kiongozi)
+  ctx.fillStyle="#fff"; rr(350,56,260,120,10); ctx.fill();
+  ctx.strokeStyle="#d8cfbc"; ctx.lineWidth=3; rr(350,56,260,120,10); ctx.stroke();
+  ctx.fillStyle="#8a8177"; ctx.font="600 15px -apple-system,sans-serif";
+  ctx.textAlign="center"; ctx.fillText("B A R A Z A",480,124);
+  ctx.strokeStyle="#c9c0ac"; ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(380,176);ctx.lineTo(360,210);
+  ctx.moveTo(580,176);ctx.lineTo(600,210);ctx.stroke();
+  // desks
+  for (const id of ["tangaza","mhandisi-mkuu"]){
+    const d=HOME[id].desk, c=ROSTER[id].color;
+    ctx.fillStyle="#fff"; rr(d.x,d.y,d.w,d.h,12); ctx.fill();
+    ctx.strokeStyle="#e0d7c4"; ctx.lineWidth=2; rr(d.x,d.y,d.w,d.h,12); ctx.stroke();
+    ctx.fillStyle="#3a352c"; rr(d.x+60,d.y+18,60,40,4); ctx.fill(); // monitor
+    ctx.fillStyle=c; ctx.globalAlpha=.25;
+    ctx.fillRect(d.x+63,d.y+21,54,34); ctx.globalAlpha=1;             // screen glow
+    ctx.fillStyle="#8a8177"; ctx.font="600 12px -apple-system,sans-serif";
+    ctx.fillText(ROSTER[id].name.toUpperCase(), d.x+d.w/2, d.y+d.h+22);
+  }
+  // plant, because every office has one
+  ctx.fillStyle="#86b06a";
+  ctx.beginPath();ctx.ellipse(70,120,16,26,0,0,7);ctx.fill();
+  ctx.fillStyle="#c96f4a"; rr(58,140,24,22,4); ctx.fill();
+}
+function drawChar(ch){
+  const c = ROSTER[ch.id] ? ROSTER[ch.id].color : "#6b7280";
+  let dx=0;
+  const t = performance.now()/1000;
+  if (ch.state==="working") dx = 0;                       // seated, typing
+  if (ch.state==="error") dx = Math.sin(t*40)*4;          // shake
+  const x = ch.x+dx, y = ch.y + (ch.state==="working" ? Math.sin(t*14)*1.6 : 0);
+  // shadow
+  ctx.fillStyle="rgba(60,50,30,.12)";
+  ctx.beginPath();ctx.ellipse(x,y+30,20,7,0,0,7);ctx.fill();
+  // body (chunky jellybean)
+  ctx.fillStyle=c; rr(x-17,y-22,34,50,15); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,.35)"; rr(x-17,y-22,34,16,15); ctx.fill();
+  // head
+  ctx.fillStyle="#f3d9b8"; ctx.beginPath();ctx.arc(x,y-34,14,0,7);ctx.fill();
+  // eyes
+  ctx.fillStyle="#2b2620";
+  const blink = (t*0.7+ch.bob)%4 < 0.12 ? 1 : 4;
+  ctx.beginPath();ctx.ellipse(x-5,y-35,2.4,blink,0,0,7);ctx.fill();
+  ctx.beginPath();ctx.ellipse(x+5,y-35,2.4,blink,0,0,7);ctx.fill();
+  // typing ticks
+  if (ch.state==="working"){
+    ctx.strokeStyle=c; ctx.lineWidth=2.4; ctx.lineCap="round";
+    const o=Math.sin(t*14)*3;
+    ctx.beginPath();ctx.moveTo(x-26,y-6+o);ctx.lineTo(x-34,y-10+o);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(x+26,y-6-o);ctx.lineTo(x+34,y-10-o);ctx.stroke();
+  }
+  if (ch.state==="error"){
+    ctx.fillStyle="#dc2626"; ctx.font="700 20px -apple-system,sans-serif";
+    ctx.textAlign="center"; ctx.fillText("!",x,y-56);
+  }
+  // name + speech bubble
+  ctx.fillStyle="#6f665a"; ctx.font="600 11px -apple-system,sans-serif";
+  ctx.textAlign="center"; ctx.fillText(ROSTER[ch.id]?ROSTER[ch.id].name:ch.id, x, y+48);
+  const act = (ch.activity||"").slice(0,64);
+  if (act && act!=="waiting"){
+    ctx.font="12px -apple-system,sans-serif";
+    const w = Math.min(230, ctx.measureText(act).width+20);
+    const bx=x-w/2, by=y-108;
+    ctx.fillStyle="#fff"; rr(bx,by,w,30,10); ctx.fill();
+    ctx.strokeStyle="#e0d7c4"; ctx.lineWidth=1.5; rr(bx,by,w,30,10); ctx.stroke();
+    ctx.fillStyle="#2b2620"; ctx.textAlign="center";
+    ctx.fillText(act.length>38?act.slice(0,37)+"…":act, x, by+20);
+    ctx.fillStyle="#fff";
+    ctx.beginPath();ctx.moveTo(x-7,by+29);ctx.lineTo(x+7,by+29);ctx.lineTo(x,by+38);
+    ctx.closePath();ctx.fill();ctx.stroke();
+  }
+}
+function tick(){
+  const t = performance.now()/1000;
+  for (const id in chars){
+    const ch = chars[id], H = HOME[id] || {x:480,y:420};
+    // pick target by state
+    if (ch.state==="working" && H.desk){ ch.tx=H.x; ch.ty=H.y; }
+    else if (ch.state==="thinking"){ ch.tx=480; ch.ty=252; }
+    else if (ch.state==="idle"){
+      ch.wanderT -= 1/60;
+      if (ch.wanderT<=0){
+        ch.wanderT = 2+Math.random()*3;
+        ch.tx = H.x + (Math.random()*120-60);
+        ch.ty = H.y + (Math.random()*70-35);
+      }
+    }
+    // glide
+    const dx=ch.tx-ch.x, dy=ch.ty-ch.y, d=Math.hypot(dx,dy);
+    if (d>2){ const s=Math.min(d, 90/60); ch.x+=dx/d*s; ch.y+=dy/d*s; }
+  }
+  ctx.clearRect(0,0,960,620);
+  drawRoom();
+  const order = Object.values(chars).sort((a,b)=>a.y-b.y);
+  for (const ch of order) drawChar(ch);
+  requestAnimationFrame(tick);
+}
+
+/* ---------- events ---------- */
+function applyEvent(ev){
+  if (ev.type==="snapshot" && ev.agents){
+    for (const a of ev.agents){
+      if (!chars[a.id]) chars[a.id]=
+        {id:a.id,x:480,y:420,tx:480,ty:420,state:"idle",activity:"waiting",
+         wanderT:0,bob:Math.random()*6.28,shake:0};
+      chars[a.id].state=a.state; chars[a.id].activity=a.last_activity;
+    }
+    renderAgents(ev.agents); return;
+  }
+  const ch = chars[ev.agent]; if(!ch) return;
+  const map={agent_spawn:"idle",llm_start:"working",llm_end:"idle",
+    tool_call:"working",handoff:"thinking",agent_idle:"idle",
+    agent_error:"error",chat_message:"working"};
+  let s = map[ev.type] || ch.state;
+  if (ev.type==="chat_message" && String(ev.detail).startsWith("out:")) s="idle";
+  ch.state=s; ch.activity=ev.detail||ev.type.replace(/_/g," ");
+  refreshAgents();
+}
+const es = new EventSource("/events");
+es.onopen = ()=>document.getElementById("conn").classList.add("live");
+es.onerror = ()=>document.getElementById("conn").classList.remove("live");
+es.onmessage = e=>{ try{ applyEvent(JSON.parse(e.data)); }catch(_){}};
+
+/* ---------- side panel ---------- */
+const STATE_DOT={idle:"#4f46e5",working:"#0284c7",thinking:"#d97706",error:"#dc2626"};
+async function refreshAgents(){
+  try{
+    const r=await fetch("/api/agents"); const list=await r.json();
+    renderAgents(list);
+  }catch(_){}
+}
+function renderAgents(list){
+  const box=document.getElementById("agents"); box.innerHTML="";
+  for (const a of list){
+    const row=document.createElement("div"); row.className="agent";
+    row.innerHTML=`<div class="dot" style="background:${STATE_DOT[a.state]||"#999"}"></div>
+      <div class="who"><b>${a.name}</b><span>${a.last_activity||""}</span></div>
+      <div class="pill ${a.state}">${a.state}</div>`;
+    box.appendChild(row);
+  }
+}
+// chat picker
+const whoBox=document.getElementById("who");
+for (const id of Object.keys(ROSTER)){
+  const b=document.createElement("button");
+  b.textContent=ROSTER[id].name; b.dataset.id=id;
+  if(id===currentChat) b.classList.add("on");
+  b.onclick=()=>{currentChat=id;
+    whoBox.querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));};
+  whoBox.appendChild(b);
+}
+const log=document.getElementById("chatlog"),
+      input=document.getElementById("chatin"),
+      sendBtn=document.getElementById("send");
+function addMsg(who,text){
+  const d=document.createElement("div");
+  d.className="msg "+(who==="you"?"you":"them");
+  d.innerHTML = who==="you" ? escapeHtml(text)
+    : `<b>${ROSTER[currentChat].name}</b>${escapeHtml(text)}`;
+  log.appendChild(d); log.scrollTop=log.scrollHeight;
+}
+function escapeHtml(s){return s.replace(/[&<>"']/g,
+  c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+async function send(){
+  const text=input.value.trim(); if(!text||sendBtn.disabled) return;
+  input.value=""; sendBtn.disabled=true; addMsg("you",text);
+  try{
+    const r=await fetch("/api/chat",{method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({agent:currentChat,message:text})});
+    const j=await r.json();
+    addMsg("them", j.ok? j.reply : ("error: "+(j.error||"failed")));
+  }catch(_){ addMsg("them","error: office unreachable"); }
+  sendBtn.disabled=false; input.focus();
+}
+sendBtn.onclick=send;
+input.onkeydown=e=>{ if(e.key==="Enter") send(); };
+
+refreshAgents(); setInterval(refreshAgents, 8000);
+tick();
+</script>
+</body>
+</html>

@@ -45,6 +45,33 @@ scenario runs against the gateway's `judge` group -> production traffic sampling
 for continuous regression detection. Evals run before agents touch anything
 real, and keep running after.
 
+## Office: peripheral awareness + chat
+
+The **office** (`office/`) is the human surface on the substrate — one FastAPI
+service, auto-started by `start.sh` on :8080:
+
+- **Event flow:** agent code calls `agents/events.py::emit()` (best-effort,
+  never raises, never carries secrets or prompts — details are <=140-char
+  human summaries). Out-of-process emitters POST to `/events/ingest`; the
+  server folds events into per-agent state (idle/working/thinking/error) and
+  rebroadcasts over SSE (`GET /events`, hand-rolled on asyncio — no extra
+  dep). The single-file canvas UI (`office/static/index.html`, no build step,
+  no external assets, light Apple-minimal aesthetic per the fixed UI
+  direction) renders the floor: desks for Tangaza and Mhandisi Mkuu, the
+  whiteboard for Kiongozi. Characters type at their desks during LLM calls,
+  walk to the whiteboard on handoffs, shake on errors; speech bubbles show
+  current activity. Late joiners get a state snapshot on connect.
+- **Chat path:** browser -> `POST /api/chat` -> the office server builds that
+  agent (mini or mother) **with no tools attached** and runs one turn through
+  the gateway -> reply returned and shown as a speech bubble. Text only, by
+  construction: chat can never move money, send messages, or call tools, and
+  it never touches `policy/approvals.py`. Anything irreversible stays in the
+  agent/skill path with HITL.
+
+The office is the fast-timescale monitoring layer (the "ten-second" view:
+something feels off before you know why). Traces, logs, and evals remain the
+precision layers.
+
 ## Economics: DeepSeek-default, Gemini-fallback
 
 The verified starting position (2026-09-24): DeepSeek balance **$2.59**

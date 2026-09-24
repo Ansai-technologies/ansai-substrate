@@ -6,6 +6,8 @@
 *.db-journal
 policy/queue.jsonl
 policy/queue.jsonl.tmp
+.office.pid
+.venv/
 
 # python
 __pycache__/

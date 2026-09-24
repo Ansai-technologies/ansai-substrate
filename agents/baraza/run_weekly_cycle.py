@@ -44,8 +44,8 @@ def main() -> None:
     mhandisi_out = run_task(mhandisi, MHANDISI_INPUT)
 
     summaries = [
-        {"worker": "tangaza", **summarize_state(tangaza_out, goal="weekly pipeline notes")},
-        {"worker": "mhandisi-mkuu", **summarize_state(mhandisi_out, goal="weekly build status")},
+        {"worker": "tangaza", **summarize_state(tangaza_out, goal="weekly pipeline notes", worker="tangaza")},
+        {"worker": "mhandisi-mkuu", **summarize_state(mhandisi_out, goal="weekly build status", worker="mhandisi-mkuu")},
     ]
 
     mother = build_mother_agent()

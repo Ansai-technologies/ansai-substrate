@@ -47,14 +47,32 @@ python agents/baraza/run_weekly_cycle.py
 
 # 5. LLM-judge a scenario (gateway required)
 python evals/judge.py
+
+# 6. Office UI only (already auto-started by start.sh)
+./.venv/bin/python -m uvicorn office.server:app --host 127.0.0.1 --port 8080
+# -> http://localhost:8080 : live agent floor + chat with each agent
 ```
+
+## The office
+
+`./start.sh` boots the **office** alongside the gateway: a live, light,
+Apple-minimal visualization of the Baraza as a working floor — Tangaza and
+Mhandisi Mkuu at their desks, Kiongozi at the whiteboard. Characters move
+with real agent activity streamed over SSE: typing at the desk while an LLM
+call runs, walking to the whiteboard on handoffs, shaking on errors, with
+speech bubbles showing what each agent is doing.
+
+The side panel lists live agent state and has a **chat box**: pick an agent
+and talk to it. Chat is text-only — the agent answers with no tools attached,
+so it can never move money, send messages, or touch integrations.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `gateway/` | LiteLLM proxy config, compose, run docs, failover test |
-| `agents/` | mini worker, mother supervisor, handoff contract, Baraza 2.0 spike |
+| `agents/` | mini worker, mother supervisor, handoff contract, event bus, Baraza 2.0 spike |
+| `office/` | Office UI: live agent-floor visualization + text-only chat (auto-starts) |
 | `mcp/whatsapp/`, `mcp/mpesa/` | MCP tool servers (**stubs** — contracts stable, bodies TODO) |
 | `skills/sacco-member-onboarding/` | packaged workflow a mini agent executes |
 | `policy/` | HITL approval queue + human CLI |
@@ -66,7 +84,8 @@ python evals/judge.py
 ## What is real vs stub
 
 - **Real:** gateway config (needs keys + docker to run), agent code, handoff
-  contract, approval queue, deterministic tests, judge runner.
+  contract, event bus, office UI (visualization + chat), approval queue,
+  deterministic tests, judge runner.
 - **Stub:** WhatsApp + M-Pesa tool bodies (marked STUB, TODOs inline),
   prod traffic sampler, scenario agent_outputs (canned until live generation).
 - **Not started:** real WhatsApp/Daraja wiring, blackboard writer, Postgres

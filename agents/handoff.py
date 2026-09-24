@@ -20,6 +20,14 @@ Size enforcement: input transcript truncated to TRANSCRIPT_BUDGET chars
 
 import json
 
+try:
+    # events.py is stdlib-only, so this keeps the contract testable without a
+    # gateway; emission is best-effort and never raises.
+    from events import emit as _emit
+except Exception:  # pragma: no cover - defensive; events must never break this
+    def _emit(*a, **k):
+        return {}
+
 TRANSCRIPT_BUDGET = 6000   # chars of transcript considered; newest kept
 SUMMARY_BUDGET = 1500      # chars of summary JSON emitted
 MAX_FACTS = 8
@@ -33,7 +41,7 @@ def _truncate_transcript(transcript: str) -> str:
     return transcript[-TRANSCRIPT_BUDGET:]
 
 
-def summarize_state(transcript: str, goal: str = "") -> dict:
+def summarize_state(transcript: str, goal: str = "", worker: str = "mini") -> dict:
     """Deterministic v0 summarizer: extractive, no model call.
 
     Keeps this module dependency-free so the contract is testable without a
@@ -72,14 +80,21 @@ def summarize_state(transcript: str, goal: str = "") -> dict:
             summary["open_questions"] = []
             blob = json.dumps(summary, ensure_ascii=False)[:SUMMARY_BUDGET]
             summary = json.loads(blob)
+    _emit("handoff", worker, f"summary -> supervisor ({goal[:60]})")
     return summary
 
 
 def validate_summary(summary: dict) -> bool:
-    """True iff the dict honours the contract keys and size budget."""
+    """True iff the dict honours the contract keys and size budget.
+
+    The four contract keys must be present with the right shapes; extra
+    metadata keys (e.g. "worker", added by the caller for routing) are
+    allowed and ignored.
+    """
     if not isinstance(summary, dict):
         return False
-    if set(summary.keys()) != {"goal", "facts", "open_questions", "proposed_next"}:
+    required = {"goal", "facts", "open_questions", "proposed_next"}
+    if not required.issubset(set(summary.keys())):
         return False
     if not isinstance(summary["facts"], list) or not isinstance(summary["open_questions"], list):
         return False

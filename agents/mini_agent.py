@@ -12,6 +12,8 @@ import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat  # OpenAI-compatible; base_url -> gateway
 
+from events import emit
+
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:4000")
 # Agents authenticate to the gateway with a group virtual key in production;
 # the master key default below is local-dev only.
@@ -24,7 +26,7 @@ MODEL_GROUP = os.environ.get("MINI_MODEL", "workhorse")
 
 def build_mini_agent(name: str, instructions: str, tools: list | None = None) -> Agent:
     """Construct a worker agent bound to the gateway's model group."""
-    return Agent(
+    agent = Agent(
         name=name,
         model=OpenAIChat(
             id=MODEL_GROUP,  # LiteLLM model_name, e.g. "workhorse"
@@ -35,9 +37,19 @@ def build_mini_agent(name: str, instructions: str, tools: list | None = None) ->
         tools=tools or [],
         markdown=False,  # structured output stays parseable
     )
+    emit("agent_spawn", name, f"worker ready ({MODEL_GROUP})")
+    return agent
 
 
 def run_task(agent: Agent, task: str) -> str:
     """Run one task, return the text response."""
-    response = agent.run(task)
-    return response.content or ""
+    name = getattr(agent, "name", "mini") or "mini"
+    emit("llm_start", name, "working on task")
+    try:
+        response = agent.run(task)
+    except Exception as exc:
+        emit("agent_error", name, f"{type(exc).__name__}")
+        raise
+    text = response.content or ""
+    emit("llm_end", name, f"done ({len(text)} chars)")
+    return text

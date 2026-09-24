@@ -18,6 +18,7 @@ import os
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 
+from events import emit
 from handoff import validate_summary
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:4000")
@@ -38,8 +39,8 @@ Output JSON only: {"merged_state": {...}, "directives": [...], "needs_human": [.
 
 
 def build_mother_agent() -> Agent:
-    return Agent(
-        name="mother",
+    mother = Agent(
+        name="kiongozi",
         model=OpenAIChat(
             id=MODEL_GROUP,
             base_url=f"{GATEWAY_URL}/v1",
@@ -48,6 +49,8 @@ def build_mother_agent() -> Agent:
         instructions=SUPERVISOR_INSTRUCTIONS,
         markdown=False,
     )
+    emit("agent_spawn", "kiongozi", f"supervisor ready ({MODEL_GROUP})")
+    return mother
 
 
 def supervise(mother: Agent, summaries: list[dict]) -> dict:
@@ -60,8 +63,14 @@ def supervise(mother: Agent, summaries: list[dict]) -> dict:
         + json.dumps(summaries, ensure_ascii=False, indent=2)
         + "\nProduce the supervision output."
     )
-    response = mother.run(prompt)
+    emit("llm_start", "kiongozi", f"supervising {len(summaries)} summaries")
+    try:
+        response = mother.run(prompt)
+    except Exception as exc:
+        emit("agent_error", "kiongozi", f"{type(exc).__name__}")
+        raise
     content = response.content or "{}"
+    emit("llm_end", "kiongozi", "brief ready")
     try:
         return json.loads(content)
     except json.JSONDecodeError:
