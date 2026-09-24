@@ -13,10 +13,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "== 1/6 prerequisites =="
-# python3 on mac/linux, python on windows (python.org installer)
-if command -v python3 >/dev/null 2>&1; then PY=python3
-elif command -v python >/dev/null 2>&1; then PY=python
-else echo "need python3: https://www.python.org/downloads/ (tick 'Add to PATH'), then re-run."; exit 1; fi
+# pick a working python: python3 on mac/linux, python on windows.
+# (windows ships a fake python3.exe stub that opens the Store — verify the binary runs)
+PY=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null 2>&1 && "$c" --version >/dev/null 2>&1; then PY="$c"; break; fi
+done
+[ -n "$PY" ] || { echo "need python3: https://www.python.org/downloads/ (tick 'Add to PATH'), then re-run."; exit 1; }
+echo "python: $PY ($("$PY" --version 2>&1))"
 command -v docker >/dev/null || { echo "need docker (Docker Desktop). install it, start it, then re-run."; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "need 'docker compose' plugin"; exit 1; }
 echo "ok"
