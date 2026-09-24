@@ -12,7 +12,11 @@ services:
       # Postgres is REQUIRED: litellm >= 1.102 refuses sqlite, and virtual
       # keys + spend tracking (the whole COSTS.md plan) need a real DB.
       DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm
-    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    # NOTE: --num_workers must stay 1. litellm >= v1.80 workers die instantly
+    # with "Child process died" and the proxy never becomes healthy
+    # (upstream issue BerriAI/litellm#18457). One async worker is plenty
+    # for local dev; scale with replicas, not workers.
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "1"]
     restart: unless-stopped
     depends_on:
       postgres:
