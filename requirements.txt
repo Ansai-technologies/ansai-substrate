@@ -1,0 +1,11 @@
+# Loosely pinned on purpose — pin exact versions after the first working
+# install (pip freeze > requirements.lock) and commit the lockfile.
+# NOTE 2026-09-24: mcp is capped at <2 because the scaffold uses the v1
+# FastMCP API (from mcp.server.fastmcp import FastMCP); mcp 2.x renamed it
+# to MCPServer with a changed API. Revisit when migrating to 2.x.
+agno>=1.0
+litellm>=1.0
+mcp>=1.0,<2
+pytest>=8.0
+httpx>=0.27
+pyyaml>=6.0
