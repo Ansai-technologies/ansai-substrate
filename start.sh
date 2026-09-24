@@ -13,19 +13,27 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "== 1/6 prerequisites =="
-command -v python3 >/dev/null || { echo "need python3"; exit 1; }
-command -v docker >/dev/null || { echo "need docker (Docker Desktop). install it, then re-run."; exit 1; }
+# python3 on mac/linux, python on windows (python.org installer)
+if command -v python3 >/dev/null 2>&1; then PY=python3
+elif command -v python >/dev/null 2>&1; then PY=python
+else echo "need python3: https://www.python.org/downloads/ (tick 'Add to PATH'), then re-run."; exit 1; fi
+command -v docker >/dev/null || { echo "need docker (Docker Desktop). install it, start it, then re-run."; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo "need 'docker compose' plugin"; exit 1; }
 echo "ok"
 
 echo "== 2/6 python venv =="
 if [ ! -d .venv ]; then
-  python3 -m venv .venv
-  .venv/bin/pip install -q --upgrade pip
-  .venv/bin/pip install -q -r requirements.txt
-  echo "installed"
+  "$PY" -m venv .venv
+  FRESH_VENV=1
 else
   echo "exists, skipping"
+fi
+# venv layout differs per OS: .venv/bin (mac/linux) vs .venv/Scripts (windows)
+if [ -d .venv/bin ]; then VBIN=.venv/bin; else VBIN=.venv/Scripts; fi
+if [ "${FRESH_VENV:-0}" = 1 ]; then
+  "$VBIN/pip" install -q --upgrade pip
+  "$VBIN/pip" install -q -r requirements.txt
+  echo "installed"
 fi
 
 echo "== 3/6 gateway env =="
@@ -33,6 +41,8 @@ if [ ! -f gateway/.env ]; then
   cp gateway/.env.example gateway/.env
   echo "created gateway/.env from the example."
 fi
+# normalize CRLF (e.g. .env written by PowerShell) so sourced values carry no trailing \r
+sed -i.bak 's/\r$//' gateway/.env && rm -f gateway/.env.bak
 # shellcheck disable=SC1091
 set -a; source gateway/.env; set +a
 if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ -z "${GEMINI_API_KEY:-}" ]; then
@@ -61,7 +71,7 @@ export OFFICE_URL="http://localhost:8080"
 if [ -f .office.pid ] && kill -0 "$(cat .office.pid)" 2>/dev/null; then
   echo "office already running (pid $(cat .office.pid))"
 else
-  .venv/bin/python -m uvicorn office.server:app --host 127.0.0.1 --port 8080 \
+  "$VBIN/python" -m uvicorn office.server:app --host 127.0.0.1 --port 8080 \
     >/tmp/ansai-office.log 2>&1 &
   echo $! > .office.pid
   echo -n "waiting for office"
@@ -74,12 +84,12 @@ fi
 # best-effort browser tab; never fails the script (headless-safe)
 ( xdg-open http://localhost:8080 >/dev/null 2>&1 \
   || open http://localhost:8080 >/dev/null 2>&1 \
-  || start http://localhost:8080 >/dev/null 2>&1 \
+  || powershell.exe -c "start http://localhost:8080" >/dev/null 2>&1 \
   || true ) &
 echo "office: http://localhost:8080"
 
 echo "== 6/6 baraza spike =="
-.venv/bin/python agents/baraza/run_weekly_cycle.py
+"$VBIN/python" agents/baraza/run_weekly_cycle.py
 
 echo ""
 echo "done."
