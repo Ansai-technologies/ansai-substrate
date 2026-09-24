@@ -1,0 +1,44 @@
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: ansai-litellm
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    env_file:
+      - .env # never committed; see .env.example
+    environment:
+      # Postgres is REQUIRED: litellm >= 1.102 refuses sqlite, and virtual
+      # keys + spend tracking (the whole COSTS.md plan) need a real DB.
+      DATABASE_URL: postgresql://litellm:litellm@postgres:5432/litellm
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ansai-litellm-db
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: litellm # local dev only; use a real secret on a VPS
+      POSTGRES_DB: litellm
+    volumes:
+      - litellm-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  litellm-pgdata:
+    # VPS alternative: point DATABASE_URL at Supabase Postgres instead and
+    # drop this service — same config key, no code change.
