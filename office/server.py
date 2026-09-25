@@ -50,7 +50,6 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "agents"))
 
 from mini_agent import build_mini_agent  # noqa: E402
-from mother_agent import build_mother_agent  # noqa: E402
 import events as event_bus  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -279,9 +278,12 @@ class ChatIn(BaseModel):
 
 
 def _build_chat_agent(agent_id: str):
-    """Text-only agent for chat: no tools attached, ever."""
-    if agent_id == "jabari":
-        return build_mother_agent()
+    """Text-only agent for chat: no tools attached, ever.
+
+    Everyone — including Jabari — chats as a conversational persona.
+    The supervisor-merge agent (build_mother_agent) belongs to the
+    weekly supervision cycle only, never to chat.
+    """
     return build_mini_agent(agent_id, CHAT_INSTRUCTIONS[agent_id], tools=[])
 
 
