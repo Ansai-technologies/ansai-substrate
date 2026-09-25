@@ -2,21 +2,33 @@
 
 One FastAPI service (default http://localhost:8080):
 
-  - GET  /                -> the canvas office (office/static/index.html)
+  - GET  /                -> the 3D diorama office (office/static/index.html)
+  - GET  /static/...      -> vendored assets (portraits, three.js)
   - GET  /events          -> SSE stream of agent-lifecycle events
   - POST /events/ingest  -> relay endpoint for out-of-process emitters
                             (agents/events.py POSTs here); rebroadcasts
   - GET  /api/agents     -> [{id, name, role, color, state, last_activity}]
-  - POST /api/chat       -> chat with one agent, text only
+  - POST /api/chat       -> group chat with @mentioned agents, text only
 
-Event flow:  agents -> agents/events.py -> POST /events/ingest -> SSE -> canvas.
-Chat path:   browser -> POST /api/chat -> build agent -> gateway -> reply.
+Event flow:  agents -> agents/events.py -> POST /events/ingest -> SSE -> 3D scene.
+Chat path:   browser -> POST /api/chat {targets, message} -> build agent(s)
+             -> gateway -> reply. One reply per target, in @mention order.
 
 CHAT IS TEXT ONLY. Chat agents are built with no tools attached, so a chat
 reply can never move money, send messages, or touch integrations. Anything
 irreversible still goes through policy/approvals.py, which the chat path
 never calls. Chat also never sees transcripts — it is a fresh conversation
-each turn.
+each turn. This invariant survives the multi-target chat: every target is
+built via _build_chat_agent with tools=[].
+
+Chat contract:
+  POST /api/chat {targets: ["tangaza", ...], message: "..."}
+    - targets: 1..6 valid roster ids, order preserved, deduped by the client.
+    - No @mention in the UI -> targets: ["jabari"] (chair speaks for the room).
+    - Backward compat: {agent: "<id>", message} maps to {targets: ["<id>"]}.
+  -> {ok: true, replies: [{agent, reply}]} (reply may be null on failure;
+     failures are per-agent: emit agent_error, include {agent, reply: null,
+     error: ...}, and continue with the rest)
 
 Run:  uvicorn office.server:app --host 127.0.0.1 --port 8080   (from repo root)
 """
@@ -30,6 +42,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -41,7 +54,8 @@ from mother_agent import build_mother_agent  # noqa: E402
 import events as event_bus  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-STATIC_INDEX = os.path.join(HERE, "static", "index.html")
+STATIC_DIR = os.path.join(HERE, "static")
+STATIC_INDEX = os.path.join(STATIC_DIR, "index.html")
 
 # Roster: the Baraza as an office floor. Colors: indigo + gold are the
 # company colors; the rest distinguish the desks.
@@ -144,7 +158,7 @@ def _agent_state(agent_id: str) -> dict:
     return _state[agent_id]
 
 
-# Event type -> (state, activity-prefix). The canvas maps state -> animation.
+# Event type -> (state, activity-prefix). The 3D scene maps state -> animation.
 EVENT_STATES = {
     "agent_spawn": ("idle", None),
     "llm_start": ("working", None),
@@ -175,6 +189,10 @@ def apply_event(event: dict) -> dict:
 
 
 app = FastAPI(title="Ansai Office")
+
+# Vendored assets: portraits + three.js. index.html loads everything
+# relative, so the office works the moment start.sh runs, even offline.
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # SSE fan-out. Hand-rolled on asyncio.Queue — no extra dependency.
 _subscribers: set = set()
@@ -226,6 +244,7 @@ async def events(request: Request):
                     yield ": ping\n\n"  # keep proxies from closing idle streams
                     continue
                 yield f"data: {json.dumps(event)}\n\n"
+
         finally:
             _subscribers.discard(queue)
 
@@ -254,7 +273,8 @@ def list_agents():
 
 
 class ChatIn(BaseModel):
-    agent: str = Field(pattern="^(tangaza|fundi|jabari|sanaa|akiba|dadisi)$")
+    targets: list[str] = Field(default_factory=list, min_length=0, max_length=6)
+    agent: str | None = None  # legacy single-target field; maps to targets
     message: str = Field(min_length=1, max_length=500)
 
 
@@ -267,18 +287,47 @@ def _build_chat_agent(agent_id: str):
 
 @app.post("/api/chat")
 async def chat(body: ChatIn):
+    targets = list(body.targets)
+    if not targets and body.agent:
+        targets = [body.agent]
+    if not targets:
+        targets = ["jabari"]  # no @mention: the chair speaks for the room
+    # Dedupe, keep order.
+    seen = set()
+    deduped = []
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            deduped.append(t)
+    targets = deduped
+    unknown = [t for t in targets if t not in AGENTS]
+    if unknown:
+        return JSONResponse(
+            {"ok": False, "error": f"unknown agent(s): {', '.join(unknown)}"},
+            status_code=422,
+        )
+    if len(targets) > 6:
+        return JSONResponse(
+            {"ok": False, "error": "too many targets"},
+            status_code=422,
+        )
+
     msg = body.message.strip()
-    event_bus.emit("chat_message", body.agent, f"in: {msg[:100]}")
-    try:
-        agent = _build_chat_agent(body.agent)
-        # Direct run (not supervise/run_task): chat is a fresh turn, text only.
-        response = agent.run(msg)
-        reply = (response.content or "").strip()[:2000] or "(no reply)"
-    except Exception as exc:
-        event_bus.emit("agent_error", body.agent, f"chat failed: {type(exc).__name__}")
-        return JSONResponse({"ok": False, "error": "agent failed"}, status_code=502)
-    event_bus.emit("chat_message", body.agent, f"out: {reply[:100]}")
-    return {"ok": True, "reply": reply}
+    replies = []
+    for agent_id in targets:
+        event_bus.emit("chat_message", agent_id, f"in: {msg[:100]}")
+        try:
+            agent = _build_chat_agent(agent_id)
+            # Direct run (not supervise/run_task): chat is a fresh turn, text only.
+            response = agent.run(msg)
+            reply = (response.content or "").strip()[:2000] or "(no reply)"
+        except Exception as exc:
+            event_bus.emit("agent_error", agent_id, f"chat failed: {type(exc).__name__}")
+            replies.append({"agent": agent_id, "reply": None, "error": "agent failed"})
+            continue
+        event_bus.emit("chat_message", agent_id, f"out: {reply[:100]}")
+        replies.append({"agent": agent_id, "reply": reply})
+    return {"ok": True, "replies": replies}
 
 
 @app.get("/api/health")
