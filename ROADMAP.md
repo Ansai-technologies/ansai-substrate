@@ -19,7 +19,7 @@ current one's criterion holds — that discipline is the whole point.
 ## Phase 2 — Agent skeleton (weeks 1–2)
 
 - `pip install -r requirements.txt`; `pytest evals/test_tools.py` green.
-- Run the Baraza 2.0 spike end to end; inspect Kiongozi's brief for handoff
+- Run the Baraza 2.0 spike end to end; inspect Jabari's brief for handoff
   contract violations.
 - **Done-when:** spike runs, all handoffs validate, brief is coherent.
 
@@ -33,6 +33,22 @@ current one's criterion holds — that discipline is the whole point.
 - **Done-when:** full onboarding flow completes against stubs with an approval
   record per send.
 
+### Shipped 2026-09-25 (ahead of schedule): first real tool servers
+- `mcp/github/` — real GitHub REST tools (list/read issues+PRs, search code;
+  create_issue/comment gated by HITL). Needs `GITHUB_TOKEN` in gateway/.env.
+- `mcp/web/` — read-only internet: `web_search` (DuckDuckGo, no key),
+  `fetch_page` (extract readable text).
+- `mcp/local/` — local-machine access: sandboxed to `AGENT_LOCAL_ROOT`
+  (default: repo root); credential files refused; `delete_file` and
+  `run_command` always ask approval (small read-only allowlist skips it);
+  every call audited to `policy/audit.jsonl` (gitignored).
+- `agents/tools_registry.py` — `scout` (read-only) vs `worker` (+gated writes)
+  profiles; `agents/run_worker.py` runs one worker with tools, visible live
+  in the office at http://localhost:8080.
+- **Done-when:** `pytest evals/test_tools.py` green; a worker run completes a
+  read-only task (e.g. "summarize my open GitHub issues") with characters
+  animating in the office and zero approval prompts.
+
 ## Phase 4 — Evals (weeks 3–4)
 
 - `python evals/judge.py` runs all scenarios green; add scenarios for every
@@ -45,7 +61,7 @@ current one's criterion holds — that discipline is the whole point.
 
 ## Phase 5 — Baraza 2.0, for real (weeks 4–6)
 
-- Replace toy inputs with real department state; persist Kiongozi's brief
+- Replace toy inputs with real department state; persist Jabari's brief
   (blackboard writer — new work, not in this scaffold).
 - Baraza runs the Monday cycle on the substrate weekly.
 - **Done-when:** two consecutive weekly briefs produced without manual repair.

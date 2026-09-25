@@ -6,6 +6,7 @@
 *.db-journal
 policy/queue.jsonl
 policy/queue.jsonl.tmp
+policy/audit.jsonl
 .office.pid
 .venv/
 

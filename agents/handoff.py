@@ -87,14 +87,14 @@ def summarize_state(transcript: str, goal: str = "", worker: str = "mini") -> di
 def validate_summary(summary: dict) -> bool:
     """True iff the dict honours the contract keys and size budget.
 
-    The four contract keys must be present with the right shapes; extra
-    metadata keys (e.g. "worker", added by the caller for routing) are
-    allowed and ignored.
+    Exactly the four contract keys, with the right shapes. Routing metadata
+    (e.g. which worker produced the summary) travels outside this dict —
+    summarize_state takes it as a parameter instead.
     """
     if not isinstance(summary, dict):
         return False
     required = {"goal", "facts", "open_questions", "proposed_next"}
-    if not required.issubset(set(summary.keys())):
+    if set(summary.keys()) != required:
         return False
     if not isinstance(summary["facts"], list) or not isinstance(summary["open_questions"], list):
         return False
