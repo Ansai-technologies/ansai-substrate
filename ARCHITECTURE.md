@@ -7,7 +7,7 @@ emits and ingests data, and the company stack runs: capture -> clean -> store ->
 tools -> mini agent per person -> one mother agent over all. This repo is the
 substrate that thesis runs on. Build it once; two surfaces consume it:
 
-1. **Internal (Baraza 2.0):** Kiongozi as supervisor over department agents,
+1. **Internal (Baraza 2.0):** Jabari as supervisor over department agents,
    running the company's own weekly cycle on the same gateway, tools, and evals
    we sell. Dogfood first — it becomes the demo.
 2. **Product (client runtimes):** the SACCO WhatsApp runtime and whatever comes
@@ -57,8 +57,8 @@ service, auto-started by `start.sh` on :8080:
   rebroadcasts over SSE (`GET /events`, hand-rolled on asyncio — no extra
   dep). The single-file canvas UI (`office/static/index.html`, no build step,
   no external assets, light Apple-minimal aesthetic per the fixed UI
-  direction) renders the floor: desks for Tangaza and Mhandisi Mkuu, the
-  whiteboard for Kiongozi. Characters type at their desks during LLM calls,
+  direction) renders the floor: desks for Tangaza, Sanaa, Fundi, and Akiba, the
+  whiteboard for Jabari, and a research nook for Dadisi. Characters type at their desks during LLM calls,
   walk to the whiteboard on handoffs, shake on errors; speech bubbles show
   current activity. Late joiners get a state snapshot on connect.
 - **Chat path:** browser -> `POST /api/chat` -> the office server builds that

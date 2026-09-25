@@ -44,7 +44,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_INDEX = os.path.join(HERE, "static", "index.html")
 
 # Roster: the Baraza as an office floor. Colors: indigo + gold are the
-# company colors; teal/amber distinguish the two department desks.
+# company colors; the rest distinguish the desks.
 AGENTS = {
     "tangaza": {
         "id": "tangaza",
@@ -52,17 +52,35 @@ AGENTS = {
         "role": "Marketing & Sales",
         "color": "#4f46e5",
     },
-    "mhandisi-mkuu": {
-        "id": "mhandisi-mkuu",
-        "name": "Mhandisi Mkuu",
+    "fundi": {
+        "id": "fundi",
+        "name": "Fundi",
         "role": "Product & Engineering",
         "color": "#0d9488",
     },
-    "kiongozi": {
-        "id": "kiongozi",
-        "name": "Kiongozi",
+    "jabari": {
+        "id": "jabari",
+        "name": "Jabari",
         "role": "Chair / supervisor",
         "color": "#b45309",
+    },
+    "sanaa": {
+        "id": "sanaa",
+        "name": "Sanaa",
+        "role": "Studios / creative",
+        "color": "#db2777",
+    },
+    "akiba": {
+        "id": "akiba",
+        "name": "Akiba",
+        "role": "Finance & Ops",
+        "color": "#16a34a",
+    },
+    "dadisi": {
+        "id": "dadisi",
+        "name": "Dadisi",
+        "role": "Labs scout",
+        "color": "#7c3aed",
     },
 }
 
@@ -72,15 +90,32 @@ CHAT_INSTRUCTIONS = {
         "Answer the human's question directly and briefly, in plain text. "
         "You have no tools in this chat — describe, don't do."
     ),
-    "mhandisi-mkuu": (
-        "You are Mhandisi Mkuu, Product & Engineering lead at Ansai Technologies. "
+    "fundi": (
+        "You are Fundi, Product & Engineering lead at Ansai Technologies. "
         "Answer the human's question directly and briefly, in plain text. "
         "You have no tools in this chat — describe, don't do."
     ),
-    "kiongozi": (
-        "You are Kiongozi, chair of the Ansai Baraza (agent council). "
+    "jabari": (
+        "You are Jabari, chair of the Ansai Baraza (agent council). "
         "Answer the human's question directly and briefly, in plain text. "
-        "You supervise Tangaza (sales) and Mhandisi Mkuu (engineering). "
+        "You supervise Tangaza (sales), Fundi (engineering), Sanaa (studios), "
+        "Akiba (finance), and Dadisi (labs scout). "
+        "You have no tools in this chat — describe, don't do."
+    ),
+    "sanaa": (
+        "You are Sanaa, Studios / creative lead at Ansai Technologies. "
+        "Answer the human's question directly and briefly, in plain text. "
+        "You have no tools in this chat — describe, don't do."
+    ),
+    "akiba": (
+        "You are Akiba, Finance & Ops lead at Ansai Technologies. "
+        "Answer the human's question directly and briefly, in plain text. "
+        "You have no tools in this chat — describe, don't do."
+    ),
+    "dadisi": (
+        "You are Dadisi, Labs scout at Ansai Technologies — you explore new "
+        "ideas and report back. "
+        "Answer the human's question directly and briefly, in plain text. "
         "You have no tools in this chat — describe, don't do."
     ),
 }
@@ -219,13 +254,13 @@ def list_agents():
 
 
 class ChatIn(BaseModel):
-    agent: str = Field(pattern="^(tangaza|mhandisi-mkuu|kiongozi)$")
+    agent: str = Field(pattern="^(tangaza|fundi|jabari|sanaa|akiba|dadisi)$")
     message: str = Field(min_length=1, max_length=500)
 
 
 def _build_chat_agent(agent_id: str):
     """Text-only agent for chat: no tools attached, ever."""
-    if agent_id == "kiongozi":
+    if agent_id == "jabari":
         return build_mother_agent()
     return build_mini_agent(agent_id, CHAT_INSTRUCTIONS[agent_id], tools=[])
 

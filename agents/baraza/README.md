@@ -1,7 +1,7 @@
 # Baraza 2.0 spike
 
-The mother-agent pattern dogfooded on Ansai itself: **Kiongozi** supervises two
-department minis — **Tangaza** (Marketing & Sales) and **Mhandisi Mkuu**
+The mother-agent pattern dogfooded on Ansai itself: **Jabari** supervises two
+department minis — **Tangaza** (Marketing & Sales) and **Fundi**
 (Product & Engineering) — through one weekly-cycle task, end to end, on the
 substrate (gateway -> agents -> handoff summaries -> supervisor).
 
@@ -17,10 +17,10 @@ python agents/baraza/run_weekly_cycle.py
 ## What it does (toy task: the Monday weekly brief)
 
 1. Tangaza (mini, `workhorse`) drafts the week's pipeline notes from toy input.
-2. Mhandisi Mkuu (mini, `workhorse`) drafts the build status from toy input.
-3. Each compresses its result via `handoff.summarize_state` — Kiongozi never
+2. Fundi (mini, `workhorse`) drafts the build status from toy input.
+3. Each compresses its result via `handoff.summarize_state` — Jabari never
    sees their working text.
-4. Kiongozi (mother, `thinker`) merges the two summaries into one decision
+4. Jabari (mother, `thinker`) merges the two summaries into one decision
    brief and flags anything needing the founder.
 
 ## What it proves

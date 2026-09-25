@@ -40,7 +40,7 @@ Output JSON only: {"merged_state": {...}, "directives": [...], "needs_human": [.
 
 def build_mother_agent() -> Agent:
     mother = Agent(
-        name="kiongozi",
+        name="jabari",
         model=OpenAIChat(
             id=MODEL_GROUP,
             base_url=f"{GATEWAY_URL}/v1",
@@ -49,7 +49,7 @@ def build_mother_agent() -> Agent:
         instructions=SUPERVISOR_INSTRUCTIONS,
         markdown=False,
     )
-    emit("agent_spawn", "kiongozi", f"supervisor ready ({MODEL_GROUP})")
+    emit("agent_spawn", "jabari", f"supervisor ready ({MODEL_GROUP})")
     return mother
 
 
@@ -63,14 +63,14 @@ def supervise(mother: Agent, summaries: list[dict]) -> dict:
         + json.dumps(summaries, ensure_ascii=False, indent=2)
         + "\nProduce the supervision output."
     )
-    emit("llm_start", "kiongozi", f"supervising {len(summaries)} summaries")
+    emit("llm_start", "jabari", f"supervising {len(summaries)} summaries")
     try:
         response = mother.run(prompt)
     except Exception as exc:
-        emit("agent_error", "kiongozi", f"{type(exc).__name__}")
+        emit("agent_error", "jabari", f"{type(exc).__name__}")
         raise
     content = response.content or "{}"
-    emit("llm_end", "kiongozi", "brief ready")
+    emit("llm_end", "jabari", "brief ready")
     try:
         return json.loads(content)
     except json.JSONDecodeError:

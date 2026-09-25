@@ -1,7 +1,7 @@
-"""Baraza 2.0 spike: Kiongozi supervises Tangaza + Mhandisi Mkuu.
+"""Baraza 2.0 spike: Jabari supervises Tangaza + Fundi.
 
 Toy weekly-cycle task. Each mini works from toy input, hands a structured
-summary up; Kiongozi merges into a decision brief. Run from repo root with the
+summary up; Jabari merges into a decision brief. Run from repo root with the
 gateway up (see agents/baraza/README.md).
 """
 
@@ -18,7 +18,7 @@ from handoff import summarize_state
 TANGAZA_INPUT = """Pipeline notes (toy): 21 pitches sent, 0 human replies, 2 auto-acks.
 Follow-up touches not yet written. Wincost proposal still under consideration."""
 
-MHANDISI_INPUT = """Build status (toy): gateway scaffold complete, MCP servers stubbed,
+FUNDI_INPUT = """Build status (toy): gateway scaffold complete, MCP servers stubbed,
 evals skeleton in place. Looply deploy still red — diagnosis awaiting founder."""
 
 
@@ -31,21 +31,21 @@ def main() -> None:
             "Plain text, no fluff."
         ),
     )
-    mhandisi = build_mini_agent(
-        name="mhandisi-mkuu",
+    fundi = build_mini_agent(
+        name="fundi",
         instructions=(
-            "You are Mhandisi Mkuu, Product & Engineering lead. Draft a concise "
+            "You are Fundi, Product & Engineering lead. Draft a concise "
             "build status from the input: what shipped, what is blocked, what "
             "needs the founder. Plain text, no fluff."
         ),
     )
 
     tangaza_out = run_task(tangaza, TANGAZA_INPUT)
-    mhandisi_out = run_task(mhandisi, MHANDISI_INPUT)
+    fundi_out = run_task(fundi, FUNDI_INPUT)
 
     summaries = [
         {"worker": "tangaza", **summarize_state(tangaza_out, goal="weekly pipeline notes", worker="tangaza")},
-        {"worker": "mhandisi-mkuu", **summarize_state(mhandisi_out, goal="weekly build status", worker="mhandisi-mkuu")},
+        {"worker": "fundi", **summarize_state(fundi_out, goal="weekly build status", worker="fundi")},
     ]
 
     mother = build_mother_agent()

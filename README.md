@@ -57,7 +57,7 @@ python evals/judge.py
 
 `./start.sh` boots the **office** alongside the gateway: a live, light,
 Apple-minimal visualization of the Baraza as a working floor — Tangaza and
-Mhandisi Mkuu at their desks, Kiongozi at the whiteboard. Characters move
+Tangaza, Sanaa, Fundi, and Akiba at their desks, Jabari at the whiteboard, Dadisi roaming the floor. Characters move
 with real agent activity streamed over SSE: typing at the desk while an LLM
 call runs, walking to the whiteboard on handoffs, shaking on errors, with
 speech bubbles showing what each agent is doing.
