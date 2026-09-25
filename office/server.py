@@ -8,35 +8,48 @@ One FastAPI service (default http://localhost:8080):
   - POST /events/ingest  -> relay endpoint for out-of-process emitters
                             (agents/events.py POSTs here); rebroadcasts
   - GET  /api/agents     -> [{id, name, role, color, state, last_activity}]
-  - POST /api/chat       -> group chat with @mentioned agents, text only
+  - POST /api/chat       -> group chat with @mentioned agents (async accept;
+                            replies + tool results stream in via the shared log)
+  - GET  /api/chat/log   -> shared chat log entries (polling; ?since=<seq>)
+  - GET  /api/approvals/pending -> HITL approval cards for gated tool calls
+  - POST /api/approvals/{id}/approve|deny
 
 Event flow:  agents -> agents/events.py -> POST /events/ingest -> SSE -> 3D scene.
-Chat path:   browser -> POST /api/chat {targets, message} -> build agent(s)
-             -> gateway -> reply. One reply per target, in @mention order.
+Chat path:   browser -> POST /api/chat {targets, message} -> 202-style accept
+             -> one daemon thread per target runs _run_chat_agent ->
+             worker-profile agent (read tools free, writes gated by approvals)
+             -> reply appended to the shared chat log -> UI polls /api/chat/log.
 
-CHAT IS TEXT ONLY. Chat agents are built with no tools attached, so a chat
-reply can never move money, send messages, or touch integrations. Anything
-irreversible still goes through policy/approvals.py, which the chat path
-never calls. Chat also never sees transcripts — it is a fresh conversation
-each turn. This invariant survives the multi-target chat: every target is
-built via _build_chat_agent with tools=[].
+CHAT EXECUTES. Chat agents are built with the `worker` tool profile from
+agents/tools_registry.py, so they can read, check, and look things up, and —
+with human approval — write, delete, run shell commands, and send. Gated
+tools block on policy/approvals.request_approval(), which appends a PENDING
+record to policy/queue.jsonl; the chat UI surfaces it as an approval card and
+the founder approves/denies from there. Read-only tools never block.
+
+Shared context: every human message, agent reply, and system note lands in the
+append-only office/chat-log.jsonl (loaded at startup, 300 entries in memory).
+Each chat turn gets the last 30 log entries as "recent office chat", so every
+agent reads what everyone said before it. The founder sees the same log the
+agents see.
 
 Chat contract:
   POST /api/chat {targets: ["tangaza", ...], message: "..."}
-    - targets: 1..6 valid roster ids, order preserved, deduped by the client.
-    - No @mention in the UI -> targets: ["jabari"] (chair speaks for the room).
+    - targets: 0..6 roster ids; "everyone" expands to all six, order preserved,
+      deduped. No @mention in the UI -> targets: ["jabari"] (chair speaks).
     - Backward compat: {agent: "<id>", message} maps to {targets: ["<id>"]}.
-  -> {ok: true, replies: [{agent, reply}]} (reply may be null on failure;
-     failures are per-agent: emit agent_error, include {agent, reply: null,
-     error: ...}, and continue with the rest)
+  -> {ok: true, accepted: [...], seq: <human msg seq>} immediately.
+     Replies arrive later via GET /api/chat/log?since=<seq>.
 
 Run:  uvicorn office.server:app --host 127.0.0.1 --port 8080   (from repo root)
 """
 
 import asyncio
+import importlib.util
 import json
 import os
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -49,8 +62,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "agents"))
 
+# Chat approvals get a shorter fuse than background tasks (10 min): the human
+# is sitting in the chat watching. Must be set BEFORE tools_registry loads the
+# MCP servers, which bind policy/approvals.DEFAULT_TIMEOUT at import time.
+os.environ.setdefault("APPROVAL_TIMEOUT", "600")
+
 from mini_agent import build_mini_agent  # noqa: E402
+from tools_registry import get_tools  # noqa: E402
 import events as event_bus  # noqa: E402
+
+
+def _load_by_path(name: str, *parts: str):
+    """Load a module by file path — avoids sys.path shadowing clashes."""
+    path = os.path.join(ROOT, *parts)
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_approvals = _load_by_path("office_policy_approvals", "policy", "approvals.py")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(HERE, "static")
@@ -97,41 +128,95 @@ AGENTS = {
     },
 }
 
-CHAT_INSTRUCTIONS = {
+# Shared rules for every chat turn: read the room first, answer directly when
+# it's just talk, use tools when asked to do something, and never claim an
+# unapproved write as done.
+_CHAT_RULES = (
+    "You are in the Baraza office group chat with Melchizedek (the founder) "
+    "and the other agents. The recent conversation is shown above — read it "
+    "before replying, including what other agents said. "
+    "If Melchizedek is just chatting or asking something you can answer directly, "
+    "reply briefly in plain text (no JSON, no markdown headers). "
+    "If he asks you to do, check, find, or change something, use your tools, "
+    "then report what you did in one or two sentences. "
+    "Read-only tools run freely. Writes, deletes, shell commands, and sends pop "
+    "an approval card in the chat — briefly say what you want to do and wait for "
+    "his decision; never claim you did something you didn't."
+)
+
+WORKER_CHAT_INSTRUCTIONS = {
     "tangaza": (
-        "You are Tangaza, Marketing & Sales lead at Ansai Technologies. "
-        "Answer the human's question directly and briefly, in plain text. "
-        "You have no tools in this chat — describe, don't do."
+        "You are Tangaza, Marketing & Sales lead at Ansai Technologies. " + _CHAT_RULES
     ),
     "fundi": (
-        "You are Fundi, Product & Engineering lead at Ansai Technologies. "
-        "Answer the human's question directly and briefly, in plain text. "
-        "You have no tools in this chat — describe, don't do."
+        "You are Fundi, Product & Engineering lead at Ansai Technologies. " + _CHAT_RULES
     ),
     "jabari": (
         "You are Jabari, chair of the Ansai Baraza (agent council). "
-        "Answer the human's question directly and briefly, in plain text. "
         "You supervise Tangaza (sales), Fundi (engineering), Sanaa (studios), "
-        "Akiba (finance), and Dadisi (labs scout). "
-        "You have no tools in this chat — describe, don't do."
+        "Akiba (finance), and Dadisi (labs scout). " + _CHAT_RULES
     ),
     "sanaa": (
-        "You are Sanaa, Studios / creative lead at Ansai Technologies. "
-        "Answer the human's question directly and briefly, in plain text. "
-        "You have no tools in this chat — describe, don't do."
+        "You are Sanaa, Studios / creative lead at Ansai Technologies. " + _CHAT_RULES
     ),
     "akiba": (
-        "You are Akiba, Finance & Ops lead at Ansai Technologies. "
-        "Answer the human's question directly and briefly, in plain text. "
-        "You have no tools in this chat — describe, don't do."
+        "You are Akiba, Finance & Ops lead at Ansai Technologies. " + _CHAT_RULES
     ),
     "dadisi": (
         "You are Dadisi, Labs scout at Ansai Technologies — you explore new "
-        "ideas and report back. "
-        "Answer the human's question directly and briefly, in plain text. "
-        "You have no tools in this chat — describe, don't do."
+        "ideas and report back. " + _CHAT_RULES
     ),
 }
+
+# Shared chat log: every human message, agent reply, and system note.
+# Append-only on disk (office/chat-log.jsonl); last 300 kept in memory.
+# Author is "human", an agent id, or "system".
+CHAT_LOG_PATH = os.path.join(HERE, "chat-log.jsonl")
+CHAT_LOG: list[dict] = []
+_chat_seq = 0
+_chat_lock = threading.Lock()
+
+
+def _log(author: str, text: str) -> dict:
+    """Append one entry to the shared chat log; returns the entry."""
+    global _chat_seq
+    with _chat_lock:
+        _chat_seq += 1
+        entry = {"seq": _chat_seq, "ts": _now(), "author": author, "text": text}
+        CHAT_LOG.append(entry)
+        if len(CHAT_LOG) > 300:
+            del CHAT_LOG[: len(CHAT_LOG) - 300]
+        try:
+            with open(CHAT_LOG_PATH, "a") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # disk hiccup must never break chat
+        return entry
+
+
+def _load_chat_log() -> None:
+    """Restore the shared log from disk at startup (keeps last 300)."""
+    global _chat_seq
+    if not os.path.exists(CHAT_LOG_PATH):
+        return
+    with open(CHAT_LOG_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(entry, dict) or "seq" not in entry:
+                continue
+            CHAT_LOG.append(entry)
+            _chat_seq = max(_chat_seq, int(entry["seq"]))
+    if len(CHAT_LOG) > 300:
+        del CHAT_LOG[: len(CHAT_LOG) - 300]
+
+
+_load_chat_log()
 
 # Live state, derived from the event stream. States: idle | working |
 # thinking | error. Unknown agent ids are tracked too (spare desk).
@@ -277,14 +362,54 @@ class ChatIn(BaseModel):
     message: str = Field(min_length=1, max_length=500)
 
 
-def _build_chat_agent(agent_id: str):
-    """Text-only agent for chat: no tools attached, ever.
+def _run_chat_agent(agent_id: str, message: str) -> None:
+    """One chat turn for one agent, on a daemon thread.
 
-    Everyone — including Jabari — chats as a conversational persona.
-    The supervisor-merge agent (build_mother_agent) belongs to the
-    weekly supervision cycle only, never to chat.
+    The agent gets the worker tool profile (read tools free, writes/shell/
+    sends gated by the approval queue) plus the last 30 shared-log entries,
+    so it reads what everyone said before replying. The reply lands in the
+    shared log; the UI polls for it.
     """
-    return build_mini_agent(agent_id, CHAT_INSTRUCTIONS[agent_id], tools=[])
+    name = AGENTS[agent_id]["name"]
+    prev_name = os.environ.get("AGENT_NAME")
+    # Best-effort tool_call attribution (mcp servers read AGENT_NAME);
+    # two threads racing here is cosmetic only.
+    os.environ["AGENT_NAME"] = agent_id
+    try:
+        event_bus.emit("llm_start", agent_id, "working on chat task")
+        with _chat_lock:
+            recent = list(CHAT_LOG[-30:])
+        lines = []
+        for e in recent:
+            author = e.get("author", "")
+            if author == "human":
+                who = "Melchizedek (founder)"
+            elif author in AGENTS:
+                who = AGENTS[author]["name"]
+            else:
+                who = str(author)  # system and anything else, labeled as-is
+            lines.append(f"{who}: {e.get('text', '')}")
+        history = "\n".join(lines) or "(no prior messages)"
+        prompt = (
+            "Recent office chat (you can see what everyone said):\n"
+            + history
+            + f"\n\nMelchizedek just wrote: {message}\nReply as {name}."
+        )
+        agent = build_mini_agent(
+            agent_id, WORKER_CHAT_INSTRUCTIONS[agent_id], tools=get_tools("worker")
+        )
+        response = agent.run(prompt)
+        reply = (response.content or "").strip()[:2000] or "(no reply)"
+        _log(agent_id, reply)
+        event_bus.emit("chat_message", agent_id, f"out: {reply[:100]}")
+    except Exception as exc:
+        event_bus.emit("agent_error", agent_id, f"chat failed: {type(exc).__name__}")
+        _log("system", f"⚠ {name} hit an error: {type(exc).__name__}: {str(exc)[:120]}")
+    finally:
+        if prev_name is None:
+            os.environ.pop("AGENT_NAME", None)
+        else:
+            os.environ["AGENT_NAME"] = prev_name
 
 
 @app.post("/api/chat")
@@ -294,6 +419,8 @@ async def chat(body: ChatIn):
         targets = [body.agent]
     if not targets:
         targets = ["jabari"]  # no @mention: the chair speaks for the room
+    if any(str(t).lower() == "everyone" for t in targets):
+        targets = list(AGENTS.keys())  # @everyone: the whole Baraza
     # Dedupe, keep order.
     seen = set()
     deduped = []
@@ -315,21 +442,42 @@ async def chat(body: ChatIn):
         )
 
     msg = body.message.strip()
-    replies = []
+    entry = _log("human", msg)
+    # Async accept: one daemon thread per target; replies stream into the
+    # shared log and the UI polls for them. The human never waits on a model.
     for agent_id in targets:
-        event_bus.emit("chat_message", agent_id, f"in: {msg[:100]}")
-        try:
-            agent = _build_chat_agent(agent_id)
-            # Direct run (not supervise/run_task): chat is a fresh turn, text only.
-            response = agent.run(msg)
-            reply = (response.content or "").strip()[:2000] or "(no reply)"
-        except Exception as exc:
-            event_bus.emit("agent_error", agent_id, f"chat failed: {type(exc).__name__}")
-            replies.append({"agent": agent_id, "reply": None, "error": "agent failed"})
-            continue
-        event_bus.emit("chat_message", agent_id, f"out: {reply[:100]}")
-        replies.append({"agent": agent_id, "reply": reply})
-    return {"ok": True, "replies": replies}
+        threading.Thread(
+            target=_run_chat_agent, args=(agent_id, msg), daemon=True
+        ).start()
+    return {"ok": True, "accepted": targets, "seq": entry["seq"]}
+
+
+@app.get("/api/chat/log")
+def chat_log(since: int = 0):
+    """Poll new shared-log entries: ?since=<seq> -> entries with seq > since."""
+    with _chat_lock:
+        entries = [e for e in CHAT_LOG if e.get("seq", 0) > since]
+    return {"entries": entries}
+
+
+@app.get("/api/approvals/pending")
+def approvals_pending():
+    """Approval cards for gated tool calls: what each agent wants to do."""
+    return {"pending": _approvals.list_pending()}
+
+
+@app.post("/api/approvals/{approval_id}/approve")
+def approvals_approve(approval_id: str):
+    if _approvals.approve(approval_id):
+        return {"ok": True}
+    return JSONResponse({"ok": False, "error": "no such approval"}, status_code=404)
+
+
+@app.post("/api/approvals/{approval_id}/deny")
+def approvals_deny(approval_id: str):
+    if _approvals.deny(approval_id):
+        return {"ok": True}
+    return JSONResponse({"ok": False, "error": "no such approval"}, status_code=404)
 
 
 @app.get("/api/health")

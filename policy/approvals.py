@@ -26,7 +26,7 @@ QUEUE_PATH = os.environ.get(
     os.path.join(os.path.dirname(__file__), "queue.jsonl"),
 )
 POLL_INTERVAL = 2.0
-DEFAULT_TIMEOUT = 3600  # 1h; then denied
+DEFAULT_TIMEOUT = float(os.environ.get("APPROVAL_TIMEOUT", "3600"))  # env override; then denied
 
 
 def _read_all() -> list[dict]:

@@ -7,7 +7,10 @@ Profiles:
            human approval queue (policy/approvals.py) — the agent cannot act
            silently, it can only ASK.
 
-Chat (office/server.py) stays tool-less by design: it answers, never acts.
+Chat (office/server.py) runs on the "worker" profile: chat agents read with the
+scout tools, and gated writes/shell/sends block on the human approval queue
+(policy/approvals.py) — approval cards surface in the chat UI. So chat
+executes, but never acts silently.
 
 MCP servers are loaded by file path (not `import mcp...`) because the repo's
 own `mcp/` directory would shadow the installed `mcp` package on sys.path.

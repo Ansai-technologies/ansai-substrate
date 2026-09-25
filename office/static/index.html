@@ -69,6 +69,28 @@
   .tdots i:nth-child(3){animation-delay:.36s}
   @keyframes tblink{0%,100%{opacity:.25;transform:translateY(0)}
     50%{opacity:1;transform:translateY(-3px)}}
+  .msg.sys{align-self:center;background:transparent;color:var(--muted);
+    font-size:11.5px;padding:2px 8px}
+  .msg.you b.at-all,.msg.them b.at-all{background:linear-gradient(135deg,#4f46e5,#b45309);
+    -webkit-background-clip:text;background-clip:text;color:transparent;font-weight:800}
+  #approvals{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+  #approvals:empty{display:none}
+  .appr{border:1px solid var(--line);border-left:4px solid #8a8177;border-radius:10px;
+    padding:8px 10px;font-size:12px;background:#fffdf8}
+  .appr .kind{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+  .appr .sum{margin:3px 0;color:var(--ink);line-height:1.4}
+  .appr .pay{font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;
+    color:var(--muted);background:#f7f4ec;border-radius:6px;padding:4px 6px;
+    margin-bottom:6px;word-break:break-all}
+  .appr .row{display:flex;gap:8px;align-items:center}
+  .appr .meta{font-size:10.5px;color:var(--muted);flex:1}
+  .appr button{border:none;border-radius:8px;padding:6px 12px;font-size:12px;
+    font-weight:600;cursor:pointer;font-family:inherit}
+  .appr button.ok{background:#16a34a;color:#fff}
+  .appr button.no{background:#f4f1ea;color:#b91c1c}
+  #apprBadge{display:none;background:#b45309;color:#fff;font-size:10px;
+    border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:1px}
+  #apprBadge.show{display:inline-block}
   #hint{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.5}
   #hint code{background:#f4f1ea;border:1px solid var(--line);border-radius:6px;
     padding:1px 5px;font-size:11px;color:var(--ink)}
@@ -98,12 +120,12 @@
   <aside>
     <div class="card"><h2>Council</h2><div id="agents"></div></div>
     <div class="card"><h2>Activity</h2><div id="feed"></div></div>
-    <div class="card"><h2>Baraza chat</h2>
+    <div class="card"><h2>Baraza chat<span id="apprBadge"></span></h2>
+      <div id="approvals"></div>
       <div id="chatlog"></div>
-      <div id="hint">Type <code>@name</code> to call agents —
-        <code>@tangaza</code> <code>@fundi</code> <code>@sanaa</code>
-        <code>@akiba</code> <code>@dadisi</code> <code>@jabari</code>
-        (no @ = Jabari answers)</div>
+      <div id="hint">Type <code>@name</code> to call an agent, <code>@everyone</code>
+        for the whole Baraza (no @ = Jabari answers). Agents can use tools now —
+        reads run free, writes pop an approval card here first.</div>
       <div id="composer">
         <input id="chatin" placeholder="@tangaza what's the plan today?" autocomplete="off">
         <button id="send">Send</button>
@@ -429,27 +451,79 @@ cyl(0.3, 0.3, 0.05, 0xd9cfae, -2.9, 0.55, -2.9, {seg:24});
 cyl(0.05, 0.05, 0.55, 0xb9ad94, -2.9, 0.28, -2.9);
 makePlant(-2.9, -2.9, 0.55);
 
-/* ---------------- characters ---------------- */
+/* ---------------- characters: voxel walkers ---------------- */
+// Minecraft-style box humanoids: portrait-cube head, colored torso, limbs that
+// swing from shoulder/hip pivots. They walk the floor: idle -> desk, working
+// -> open-floor task spot, with turn-to-face-travel and contact shadows.
 const loader = new THREE.TextureLoader();
+const TASKSPOTS = {
+  jabari: {x:-1.8, z:-0.9},
+  tangaza:{x: 1.8, z:-0.9},
+  fundi:  {x: 0.6, z: 1.3},
+  sanaa:  {x:-0.6, z: 1.3},
+  akiba:  {x: 1.8, z: 0.8},
+  dadisi: {x:-1.8, z: 0.8},
+};
+function makeContactShadow(){
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g2 = c.getContext('2d');
+  const grad = g2.createRadialGradient(64, 64, 8, 64, 64, 62);
+  grad.addColorStop(0, 'rgba(40,32,22,0.55)');
+  grad.addColorStop(1, 'rgba(40,32,22,0)');
+  g2.fillStyle = grad; g2.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(0.95, 0.95),
+    new THREE.MeshBasicMaterial({map:tex, transparent:true, opacity:0.32, depthWrite:false}));
+  m.rotation.x = -Math.PI / 2;
+  return m;
+}
+function makeVoxel(id, meta){
+  const group = new THREE.Group();
+  const color = new THREE.Color(meta.color);
+  const dark = color.clone().multiplyScalar(0.55);
+  const lam = o => new THREE.MeshLambertMaterial(o);
+  // head: portrait cube (falls back to a plain colored cube if the file 404s)
+  const headMat = lam({color:0xffffff});
+  const tex = loader.load('static/portraits/' + id + '.webp',
+    undefined, undefined,
+    () => { headMat.map = null; headMat.color.set(meta.color); headMat.needsUpdate = true; });
+  tex.colorSpace = THREE.SRGBColorSpace;
+  headMat.map = tex; headMat.needsUpdate = true;
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), headMat);
+  head.position.y = 1.24;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.55, 0.3), lam({color}));
+  torso.position.y = 0.75;
+  const armGeo = new THREE.BoxGeometry(0.14, 0.5, 0.14);
+  armGeo.translate(0, -0.25, 0);                       // pivot at the shoulder
+  const armL = new THREE.Mesh(armGeo, lam({color:dark})); armL.position.set(-0.33, 0.98, 0);
+  const armR = new THREE.Mesh(armGeo, lam({color:dark})); armR.position.set(0.33, 0.98, 0);
+  const legGeo = new THREE.BoxGeometry(0.16, 0.5, 0.16);
+  legGeo.translate(0, -0.25, 0);                       // pivot at the hip
+  const legL = new THREE.Mesh(legGeo, lam({color:0x3a4356})); legL.position.set(-0.13, 0.5, 0);
+  const legR = new THREE.Mesh(legGeo, lam({color:0x3a4356})); legR.position.set(0.13, 0.5, 0);
+  for (const m of [head, torso, armL, armR, legL, legR]){ m.castShadow = true; group.add(m); }
+  const scale = id === 'jabari' ? 1.12 : 1;            // Jabari stands a little taller
+  group.scale.setScalar(scale);
+  return {group, head, torso, armL, armR, legL, legR, scale};
+}
 const chars = {};
 for (const id of Object.keys(ROSTER)){
   const w = WORKSPOTS[id];
   const meta = ROSTER[id];
-  const tex = loader.load('static/portraits/' + id + '.webp');
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true}));
-  const s = w.big ? 1.6 : 1.42;
-  sprite.scale.set(s, s, 1);
-  // stand behind the desk (+z side), rotated with the desk
+  const v = makeVoxel(id, meta);
+  // home: behind the desk (+z side), rotated with the desk
   const behind = 0.85;
   const bx = w.x + Math.sin(w.rot) * behind;
   const bz = w.z + Math.cos(w.rot) * behind;
-  sprite.position.set(bx, s / 2 + 0.02, bz);
-  sprite.castShadow = false;
-  scene.add(sprite);
+  v.group.position.set(bx, 0, bz);
+  v.group.rotation.y = Math.atan2(w.x - bx, w.z - bz);   // face the desk
+  scene.add(v.group);
+
+  const shadow = makeContactShadow();
+  shadow.position.set(bx, 0.03, bz);
+  scene.add(shadow);
 
   const label = makeLabel(meta.name, meta.color);
-  label.position.set(bx, s + 0.42, bz);
   scene.add(label);
 
   const ring = new THREE.Mesh(
@@ -460,13 +534,15 @@ for (const id of Object.keys(ROSTER)){
   scene.add(ring);
 
   const bubble = makeTypingBubble(meta.color);
-  bubble.position.set(w.x, 2.05, w.z);
   scene.add(bubble);
 
+  const ts = TASKSPOTS[id];
   chars[id] = {
-    id, sprite, label, ring, bubble,
-    baseX: bx, baseY: s / 2 + 0.02, baseZ: bz,
-    state: 'idle', activity: '', phase: Math.random() * Math.PI * 2,
+    id, group:v.group, parts:v, label, ring, bubble, shadow,
+    home:{x:bx, z:bz}, taskSpot:{x:ts.x, z:ts.z}, dest:null, walking:false,
+    baseScale:v.scale, labelY:1.45 * v.scale + 0.35,
+    faceDesk:Math.atan2(w.x - bx, w.z - bz),
+    state:'idle', activity:'', phase:Math.random() * Math.PI * 2,
   };
 }
 
@@ -481,30 +557,66 @@ stage.addEventListener('mouseleave', () => { par.tx = 0; par.ty = 0; });
 const camBase = camera.position.clone();
 
 /* ---------------- animation ---------------- */
+let lastT = 0;
 function tick(){
   requestAnimationFrame(tick);
-  const t = performance.now() / 1000;
+  const nowMs = performance.now() / 1000;
+  const dt = Math.min(0.05, lastT ? nowMs - lastT : 0.016);
+  lastT = nowMs;
+  const t = nowMs;
   for (const id of Object.keys(chars)){
     const ch = chars[id], meta = ROSTER[id];
-    const sp = ch.sprite;
-    if (ch.state === 'working'){
-      sp.position.y = ch.baseY + Math.abs(Math.sin(t * 7 + ch.phase)) * 0.09;  // typing bounce
-      sp.position.x = ch.baseX;
+    const g = ch.group, p = ch.parts;
+    // --- movement: walk toward dest, facing the travel direction ---
+    ch.walking = false;
+    if (ch.dest){
+      const dx = ch.dest.x - g.position.x, dz = ch.dest.z - g.position.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.05){
+        g.position.x = ch.dest.x; g.position.z = ch.dest.z; ch.dest = null;
+      } else {
+        const step = Math.min(dist, 1.4 * dt);
+        g.position.x += dx / dist * step;
+        g.position.z += dz / dist * step;
+        g.rotation.y = Math.atan2(dx, dz);
+        ch.walking = true;
+      }
+    }
+    // --- pose: reset to neutral, then apply the state animation ---
+    p.armL.rotation.x = 0; p.armR.rotation.x = 0;
+    p.legL.rotation.x = 0; p.legR.rotation.x = 0;
+    p.head.rotation.z = 0; g.rotation.x = 0; g.rotation.z = 0;
+    g.scale.setScalar(ch.baseScale);
+    g.position.y = 0;
+    if (ch.walking){
+      const s = Math.sin(t * 8 + ch.phase);
+      p.legL.rotation.x = 0.55 * s;  p.legR.rotation.x = -0.55 * s;
+      p.armL.rotation.x = -0.45 * s; p.armR.rotation.x = 0.45 * s;
+      g.position.y = Math.abs(s) * 0.045;
+      g.rotation.x = 0.05;
+      ch.bubble.visible = false;
+    } else if (ch.state === 'working'){
+      g.rotation.y = ch.faceDesk;                                     // face the desk
+      g.position.y = Math.abs(Math.sin(t * 7 + ch.phase)) * 0.05;     // typing bob
+      p.armL.rotation.x = -0.55; p.armR.rotation.x = -0.55;            // hands forward
       ch.bubble.visible = true;
-      ch.bubble.position.y = 2.05 + Math.sin(t * 3 + ch.phase) * 0.05;
+      ch.bubble.position.set(g.position.x, ch.labelY + 0.28, g.position.z);
     } else if (ch.state === 'thinking'){
-      sp.position.y = ch.baseY + Math.sin(t * 1.6 + ch.phase) * 0.04;
-      sp.position.x = ch.baseX + Math.sin(t * 0.9 + ch.phase) * 0.14;           // slow sway
+      g.position.y = Math.sin(t * 1.6 + ch.phase) * 0.02;
+      p.head.rotation.z = 0.16 * Math.sin(t * 1.6 + ch.phase);         // head tilt
       ch.bubble.visible = false;
     } else {
-      sp.position.y = ch.baseY + Math.sin(t * 1.6 + ch.phase) * 0.05;           // idle bob
-      sp.position.x = ch.baseX;
+      g.scale.y = ch.baseScale * (1 + 0.008 * Math.sin(t * 1.6 + ch.phase));  // breathing
+      g.rotation.z = 0.02 * Math.sin(t * 0.9 + ch.phase);                     // tiny sway
       ch.bubble.visible = false;
     }
-    ch.label.position.set(sp.position.x, ch.baseY + 1.02, ch.baseZ);
+    // --- followers: label, shadow, ring track the group ---
+    ch.label.position.set(g.position.x, ch.labelY, g.position.z);
+    ch.shadow.position.set(g.position.x, 0.03, g.position.z);
+    ch.ring.position.set(g.position.x, 0.02, g.position.z);
     if (ch.state === 'error'){
-      const p = 1 + 0.18 * Math.sin(t * 6);
-      ch.ring.scale.set(p, p, 1);
+      const pl = 1 + 0.18 * Math.sin(t * 6);
+      ch.ring.scale.set(pl, pl, 1);
       ch.ring.material.color.set('#dc2626');
       ch.ring.material.opacity = 0.85;
     } else {
@@ -521,6 +633,13 @@ function tick(){
 }
 
 /* ---------------- state from SSE ---------------- */
+// working -> walk out to the open-floor task spot; idle -> walk back to the desk.
+function setWalkDest(ch){
+  if (ch.state === 'working' && !ch.dest) ch.dest = ch.taskSpot;
+  else if (ch.state === 'idle' && !ch.dest &&
+           (Math.abs(ch.group.position.x - ch.home.x) > 0.06 ||
+            Math.abs(ch.group.position.z - ch.home.z) > 0.06)) ch.dest = ch.home;
+}
 function applyEvent(ev){
   const map = {agent_spawn:'idle', llm_start:'working', llm_end:'idle',
     tool_call:'working', handoff:'thinking', agent_idle:'idle',
@@ -529,6 +648,7 @@ function applyEvent(ev){
     for (const a of (ev.agents || [])){
       const ch = chars[a.id]; if (!ch) continue;
       ch.state = a.state || 'idle'; ch.activity = a.last_activity || '';
+      setWalkDest(ch);
     }
     updateAgentRows(ev.agents || []);
     return;
@@ -538,6 +658,7 @@ function applyEvent(ev){
   let s = map[ev.type] || ch.state;
   if (ev.type === 'chat_message' && String(ev.detail || '').startsWith('out:')) s = 'idle';
   ch.state = s;
+  setWalkDest(ch);
   ch.activity = (ev.detail || '').slice(0, 90);
   const rows = Object.keys(ROSTER).map(id => ({
     id, name:ROSTER[id].name, role:ROSTER[id].role, color:ROSTER[id].color,
@@ -600,23 +721,30 @@ async function refreshAgents(){
   }catch(_){}
 }
 
-/* ---------------- @mention group chat ---------------- */
+/* ---------------- @mention group chat (async, shared log, approvals) ---------------- */
 const log = document.getElementById('chatlog'),
       input = document.getElementById('chatin'),
       sendBtn = document.getElementById('send');
+let lastSeq = 0;                       // shared-log cursor
+const typingBy = {};                   // agent id -> {el, ts}
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function parseMentions(text){
   const seen = new Set(), out = [];
   for (const m of text.matchAll(/@([a-z]+)/gi)){
-    const id = m[1].toLowerCase();
-    if (ROSTER[id] && !seen.has(id)){ seen.add(id); out.push(id); }
+    const word = m[1].toLowerCase();
+    if (word === 'everyone'){                       // @everyone: the whole Baraza
+      for (const id of Object.keys(ROSTER)) if (!seen.has(id)){ seen.add(id); out.push(id); }
+      continue;
+    }
+    if (ROSTER[word] && !seen.has(word)){ seen.add(word); out.push(word); }
   }
   return out;
 }
 function highlightMentions(text){
   return escapeHtml(text).replace(/@([a-zA-Z]+)/g, (m, name) => {
     const id = name.toLowerCase();
+    if (id === 'everyone') return `<b class="at at-all">@${escapeHtml(name)}</b>`;
     if (!ROSTER[id]) return m;
     return `<b class="at" style="color:${ROSTER[id].color}">@${escapeHtml(name)}</b>`;
   });
@@ -624,6 +752,11 @@ function highlightMentions(text){
 function addOwnMsg(text){
   const d = document.createElement('div'); d.className = 'msg you';
   d.innerHTML = highlightMentions(text);
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function addSysNote(text){
+  const d = document.createElement('div'); d.className = 'msg sys';
+  d.textContent = text;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 function addReply(id, text){
@@ -643,39 +776,107 @@ function addTyping(id){
   log.appendChild(d); log.scrollTop = log.scrollHeight;
   return d;
 }
+function clearTyping(id){
+  const t = typingBy[id];
+  if (t){ t.el.remove(); delete typingBy[id]; }
+}
 async function send(){
   const text = input.value.trim();
   if (!text || sendBtn.disabled) return;
   input.value = ''; sendBtn.disabled = true;
   const targets = parseMentions(text);
-  addOwnMsg(text);
   const effTargets = targets.length ? targets : ['jabari'];
-  const typingEls = effTargets.map(addTyping);
+  // Typing indicators go up now; replies arrive later via pollChat.
+  // (No optimistic own-message: our message echoes back from the shared log.)
+  const now = Date.now();
+  for (const id of effTargets){
+    clearTyping(id);
+    typingBy[id] = {el: addTyping(id), ts: now};
+  }
   try{
     const r = await fetch('/api/chat', {method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({targets: effTargets, message: text})});
     const j = await r.json();
-    typingEls.forEach(el => el.remove());
-    if (j.ok && Array.isArray(j.replies)){
-      for (const rep of j.replies){
-        if (ROSTER[rep.agent]) addReply(rep.agent, rep.reply || ('⚠ ' + (rep.error || 'no reply')));
-      }
+    if (j.ok){
+      lastSeq = Math.max(lastSeq, j.seq || 0);
     } else {
-      addReply(effTargets[0], '⚠ error: ' + (j.error || 'chat failed'));
+      effTargets.forEach(clearTyping);
+      addSysNote('⚠ ' + (j.error || 'chat failed'));
     }
   }catch(_){
-    typingEls.forEach(el => el.remove());
-    addReply(effTargets[0], '⚠ error: office unreachable');
+    effTargets.forEach(clearTyping);
+    addSysNote('⚠ office unreachable');
   }
   sendBtn.disabled = false; input.focus();
+}
+async function pollChat(){
+  try{
+    const r = await fetch('/api/chat/log?since=' + lastSeq);
+    const j = await r.json();
+    for (const e of (j.entries || [])){
+      lastSeq = Math.max(lastSeq, e.seq || 0);
+      if (e.author === 'human') addOwnMsg(e.text);
+      else if (ROSTER[e.author]){ clearTyping(e.author); addReply(e.author, e.text); }
+      else addSysNote(e.text);                       // system notes
+    }
+  }catch(_){}
+  // Typing-indicator safety: drop anything older than 120s.
+  const cutoff = Date.now() - 120000;
+  for (const id of Object.keys(typingBy)) if (typingBy[id].ts < cutoff) clearTyping(id);
 }
 sendBtn.onclick = send;
 input.onkeydown = e => { if (e.key === 'Enter') send(); };
 
+/* ---------------- approval cards ---------------- */
+const apprBox = document.getElementById('approvals');
+const apprBadge = document.getElementById('apprBadge');
+async function pollApprovals(){
+  try{
+    const r = await fetch('/api/approvals/pending');
+    const j = await r.json();
+    const list = j.pending || [];
+    apprBox.innerHTML = '';
+    apprBadge.classList.toggle('show', list.length > 0);
+    apprBadge.textContent = list.length
+      ? list.length + ' approval' + (list.length > 1 ? 's' : '') + ' pending' : '';
+    for (const rec of list){
+      const a = rec.action || {};
+      const agentId = rec.agent || (a.payload && a.payload.agent);
+      const meta = (agentId && ROSTER[agentId]) || null;
+      const color = meta ? meta.color : '#8a8177';
+      const pay = JSON.stringify(a.payload || {});
+      const card = document.createElement('div'); card.className = 'appr';
+      card.style.borderLeftColor = color;
+      card.innerHTML =
+        `<div class="kind" style="color:${color}">${escapeHtml(a.kind || 'action')}` +
+        (meta ? ` · ${escapeHtml(meta.name)}` : '') + `</div>` +
+        `<div class="sum">${escapeHtml(a.summary || '')}</div>` +
+        (pay.length > 2 ? `<div class="pay">${escapeHtml(pay.slice(0, 160))}</div>` : '') +
+        `<div class="row"><span class="meta">${escapeHtml(rec.requested_at || '')}</span>` +
+        `<button class="ok">Approve</button><button class="no">Deny</button></div>`;
+      const [okBtn, noBtn] = card.querySelectorAll('button');
+      okBtn.onclick = () => decideApproval(rec.id, 'approve', card);
+      noBtn.onclick = () => decideApproval(rec.id, 'deny', card);
+      apprBox.appendChild(card);
+    }
+  }catch(_){}
+}
+async function decideApproval(id, verb, card){
+  try{
+    const r = await fetch(`/api/approvals/${encodeURIComponent(id)}/${verb}`, {method:'POST'});
+    const j = await r.json();
+    if (j.ok) card.remove();
+  }catch(_){}
+}
+
 /* ---------------- boot ---------------- */
 buildAgentRows();
 refreshAgents();
+pollChat();                       // render shared history, set the cursor
+pollApprovals();
+setInterval(pollChat, 1200);
+setInterval(pollApprovals, 3000);
 setInterval(refreshAgents, 8000);
 fitCamera();
 tick();
