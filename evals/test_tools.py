@@ -43,13 +43,17 @@ def test_whatsapp_read_stub_contract():
     assert isinstance(out["messages"], list)
 
 
-def test_mpesa_balance_stub_contract():
+def test_mpesa_balance_stub_contract(monkeypatch):
+    monkeypatch.delenv("DARAJA_CONSUMER_KEY", raising=False)
+    monkeypatch.delenv("DARAJA_CONSUMER_SECRET", raising=False)
     out = mpesa_server.get_balance(account="sacco-float")
     assert out["status"] == "stub"
     assert "no real query" in out["note"]
 
 
-def test_mpesa_stk_push_stub_contract():
+def test_mpesa_stk_push_stub_contract(monkeypatch):
+    monkeypatch.delenv("DARAJA_CONSUMER_KEY", raising=False)
+    monkeypatch.delenv("DARAJA_CONSUMER_SECRET", raising=False)
     out = mpesa_server.stk_push(phone="+254700000000", amount_kes=500, reference="t1")
     assert out["status"] == "stub"
     assert out["amount_kes"] == 500
@@ -221,3 +225,114 @@ def test_local_open_app_asks_approval(tmp_path, monkeypatch):
     assert out["status"] == "denied"
     assert local.open_with_default_app("")["status"] == "error"
     assert local.open_with_default_app("missing.txt")["status"] == "error"
+
+# ---------------------------------------------------------------------------
+# M-Pesa Daraja wiring: pure helpers + HITL gating. No network in tests.
+# ---------------------------------------------------------------------------
+
+
+def _mpesa_with_keys(monkeypatch):
+    monkeypatch.setenv("DARAJA_CONSUMER_KEY", "fake-key")
+    monkeypatch.setenv("DARAJA_CONSUMER_SECRET", "fake-secret")
+    monkeypatch.setenv("DARAJA_PASSKEY", "fake-passkey")
+    # reset the in-memory token cache between tests
+    mpesa_server._token_cache["token"] = None
+    mpesa_server._token_cache["expires_at"] = 0.0
+
+
+def test_mpesa_normalize_phone_formats():
+    assert mpesa_server.normalize_phone("0722000000") == "254722000000"
+    assert mpesa_server.normalize_phone("254722000000") == "254722000000"
+    assert mpesa_server.normalize_phone("+254722000000") == "254722000000"
+    assert mpesa_server.normalize_phone("0722 000 000") == "254722000000"
+
+
+def test_mpesa_normalize_phone_rejects_garbage():
+    import pytest
+
+    for bad in ("123", "07123", "+15551234567", "not-a-number", ""):
+        with pytest.raises(ValueError):
+            mpesa_server.normalize_phone(bad)
+
+
+def test_mpesa_stk_password_is_base64_concat():
+    import base64
+
+    pw = mpesa_server.stk_password("174379", "passkey", "20260101000000")
+    assert pw == base64.b64encode(b"174379passkey20260101000000").decode()
+
+
+def test_mpesa_sandbox_only_no_production_switch():
+    assert "sandbox.safaricom.co.ke" in mpesa_server.STK_PUSH_URL
+    assert "sandbox.safaricom.co.ke" in mpesa_server.TOKEN_URL
+    src = open(mpesa_server.__file__).read()
+    assert "api.safaricom.co.ke" not in src  # production host must not appear
+
+
+def test_mpesa_balance_with_keys_needs_phase0b(monkeypatch):
+    _mpesa_with_keys(monkeypatch)
+    out = mpesa_server.get_balance(account="x")
+    assert out["status"] == "error"
+    assert "Phase 0b" in out["error"]
+
+
+def test_mpesa_stk_push_denied_sends_nothing(monkeypatch):
+    _mpesa_with_keys(monkeypatch)
+    monkeypatch.setattr(mpesa_server, "request_approval", lambda *a, **k: False)
+    called = []
+    monkeypatch.setattr(
+        mpesa_server, "_post_json", lambda *a, **k: called.append(1) or {}
+    )
+    out = mpesa_server.stk_push(phone="0722000000", amount_kes=500, reference="t9")
+    assert out["status"] == "denied"
+    assert called == []  # denied = no HTTP attempted
+
+
+def test_mpesa_stk_push_approved_posts_sandbox(monkeypatch):
+    _mpesa_with_keys(monkeypatch)
+    seen = {}
+
+    def fake_approval(action, timeout=3600):
+        seen["action"] = action
+        return True
+
+    def fake_post(url, body, token):
+        seen["url"] = url
+        seen["body"] = body
+        return {
+            "ResponseCode": "0",
+            "CheckoutRequestID": "ws_CO_1",
+            "CustomerMessage": "Success",
+        }
+
+    monkeypatch.setattr(mpesa_server, "request_approval", fake_approval)
+    monkeypatch.setattr(mpesa_server, "_post_json", fake_post)
+    monkeypatch.setattr(mpesa_server, "_get_token", lambda: "tok")
+    out = mpesa_server.stk_push(phone="+254722000000", amount_kes=1500, reference="order-42")
+    assert out["status"] == "ok"
+    assert out["checkout_request_id"] == "ws_CO_1"
+    assert "sandbox.safaricom.co.ke" in seen["url"]
+    body = seen["body"]
+    assert body["PartyA"] == "254722000000"
+    assert body["Amount"] == 1500
+    assert body["BusinessShortCode"] == "174379"
+    # HITL saw a human-readable summary before anything was sent
+    assert "1500" in seen["action"]["summary"] and "254722000000" in seen["action"]["summary"]
+
+
+def test_mpesa_stk_push_rejects_bad_input(monkeypatch):
+    _mpesa_with_keys(monkeypatch)
+    monkeypatch.setattr(mpesa_server, "request_approval", lambda *a, **k: True)
+    out = mpesa_server.stk_push(phone="123", amount_kes=500, reference="t")
+    assert out["status"] == "error"
+    out = mpesa_server.stk_push(phone="0722000000", amount_kes=0, reference="t")
+    assert out["status"] == "error"
+
+
+def test_mpesa_stk_push_needs_passkey(monkeypatch):
+    monkeypatch.setenv("DARAJA_CONSUMER_KEY", "fake-key")
+    monkeypatch.setenv("DARAJA_CONSUMER_SECRET", "fake-secret")
+    monkeypatch.delenv("DARAJA_PASSKEY", raising=False)
+    out = mpesa_server.stk_push(phone="0722000000", amount_kes=500, reference="t")
+    assert out["status"] == "error"
+    assert "DARAJA_PASSKEY" in out["error"]
