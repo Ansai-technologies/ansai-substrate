@@ -46,8 +46,9 @@ if [ ! -f gateway/.env ]; then
   cp gateway/.env.example gateway/.env
   echo "created gateway/.env from the example."
 fi
-# normalize CRLF (e.g. .env written by PowerShell) so sourced values carry no trailing \r
-sed -i.bak 's/\r$//' gateway/.env && rm -f gateway/.env.bak
+# normalize BOM + CRLF (e.g. .env written by PowerShell 5.1, whose -Encoding
+# utf8 emits a BOM that breaks `source` under set -e) so sourced values are clean
+sed -i.bak -e '1s/^\xef\xbb\xbf//' -e 's/\r$//' gateway/.env && rm -f gateway/.env.bak
 # shellcheck disable=SC1091
 set -a; source gateway/.env; set +a
 if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ -z "${GEMINI_API_KEY:-}" ]; then
