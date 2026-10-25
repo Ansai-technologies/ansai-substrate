@@ -82,3 +82,21 @@ current one's criterion holds — that discipline is the whole point.
 - Pay-per-crawl revenue dependence (still closed beta).
 - Self-hosted Postgres for logs — only if Supabase is ever unsuitable.
 - Multi-region / self-hosted models — only when a client contract demands it.
+
+---
+
+## Update — 2026-10-25: factory milestones and the road from here
+
+Shipped (ahead of the phases below):
+
+- **Factory v0.1 seed** — templates as standard, tool catalogue v1 (verified API pass), the ansai-utils MCP toolbox (4 tools, live-tested), REA (morluto/rea) adopted as the reverse-engineering tool.
+- **Keys state:** Raindrop connected and verified. VirusTotal stored (verification owed — network reachability from the build VM). WolframAlpha and remove.bg hold invalid values (fix paths recorded in `factory/README.md`). Clipdrop's host refuses the credential-capture flow. Printful and Semantic Scholar not yet started.
+
+The road from here, in order (each with its done-when):
+
+1. **Gateway live on our ground** — LiteLLM stood up per `gateway/` on DC-01/Lenovo with virtual keys and budgets. Done-when: an agent in this repo makes a model call that appears in the gateway log.
+2. **First agent born from the template** — the bursar agent, scaffolded from `templates/agent.template.yaml`, passing the Promptfoo + DeepEval gate. Done-when: the eval record is attested and the agent runs its first supervised cycle.
+3. **REA installed in the factory** and the Baraza agents given the catalogue toolboxes (ansai-utils + REA). Done-when: a council cycle uses a catalogue tool and the call is in the record.
+4. **Tool gateway** — catalogue servers behind one metering, policy-enforcing door, calls attested. Done-when: an external agent can be granted scoped, metered access.
+5. **Daraja production + SACCO pilot** — the phases below then proceed as written, on production rails.
+

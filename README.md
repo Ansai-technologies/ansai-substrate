@@ -92,3 +92,17 @@ so it can never move money, send messages, or touch integrations.
   log DB, per-group virtual keys (procedure documented, created post-boot).
 
 See ROADMAP.md for the order everything goes live.
+
+---
+
+## Update — 2026-10-25: the factory layer
+
+This repo is also the home of **the factory** (ratified by the founder, 2026-10-25):
+
+- `factory/README.md` — working state and the ratified decisions (sovereignty list, stack, templates as standard).
+- `templates/` — the factory standard v0.1: every agent is born from `agent.template.yaml`; every agent wallet from `wallet.template.json`. `templates/examples/bursar-agent.yaml` is the worked example.
+- `catalogue/` — the tool catalogue: a curated registry of tools (seed + verified v1). Websites become tools by API wrap or native rebuild; every entry carries its route and verification state.
+- `mcp/ansai-utils/` — the first toolbox built from the catalogue (json_format, regex_test, wayback_lookup, paper_search), live-tested.
+
+The trust platform is **Attest** (renamed from Trust Engine, 2026-10-25): verified identity, tamper-evident records, payment history, audit trails. Attest is not beside this substrate; agent actions inside it are attestable.
+
