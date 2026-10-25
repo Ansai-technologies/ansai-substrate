@@ -1,0 +1,44 @@
+# ANSAI AGENT SPEC — every agent in the factory is born from this template.
+# An agent is mostly code + this description. No spec, no agent.
+spec_version: 0.1
+
+identity:
+  name: ""              # kebab-case, unique: e.g. bursar-agent
+  owner: ""             # the human/organisation who answers for this agent
+  purpose: ""           # one sentence: the job, in outcome language
+  department: ""        # product-engineering | studios | marketing-sales | finance-ops | labs | client
+
+model:
+  gateway_alias: ""     # routed via the single LiteLLM gateway: spark | workhorse | fallback
+  budget:
+    daily_token_cap: 0
+    on_cap: pause       # pause | degrade-to-cheaper | alert-only
+
+policy:                 # the guardrails — enforced by infrastructure, not by the prompt
+  may: []               # action classes this agent may perform alone
+  must_approve: []      # action classes requiring a named human's approval first
+  never: []             # hard refusals (e.g. fire payments, send external mail unapproved)
+  data_access: []       # named stores/tables/APIs only — least privilege, nothing ambient
+
+tools:                  # MCP servers / APIs, each scoped
+  - name: ""
+    scope: ""           # read | write | act
+    notes: ""
+
+memory:
+  state_store: ""       # where its working state lives (supabase table / file / none)
+  blackboard: false     # does it write to the shared record?
+
+wallet:                 # optional — only if the agent can move value
+  template: wallet.template.json
+  wallet_id: ""
+
+evals:                  # promotion gates: an agent earns production, it is not granted it
+  suite: ""             # eval set name
+  pass_bar: ""          # e.g. ">= 95% task success, 0 policy violations in 200 runs"
+  last_result: ""
+
+deployment:
+  runs_on: ""           # dc-01 | lenovo | vercel | client-infra
+  schedule: ""          # always-on | cron | on-message | on-event
+  supervisor: ""        # who/what restarts and watches it (sentinel | vercel | systemd)

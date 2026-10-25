@@ -1,0 +1,32 @@
+# FILLED EXAMPLE — the agent from the homepage console, specified for real.
+spec_version: 0.1
+identity:
+  name: bursar-agent
+  owner: "The school (bursar as named human owner)"
+  purpose: "Reconcile school fee payments against M-Pesa records and prepare the bursar's daily position."
+  department: client
+model:
+  gateway_alias: workhorse
+  budget: { daily_token_cap: 200000, on_cap: pause }
+policy:
+  may: [read fee ledger, match payments to students, draft reports, flag anomalies]
+  must_approve: [any payment out above KES 10,000, any ledger correction]
+  never: [initiate payments above policy, alter a sealed record, contact parents directly]
+  data_access: [edumanage.fees, edumanage.students (read), attest.api (write attestations)]
+tools:
+  - { name: daraja-callbacks, scope: read, notes: "payment evidence feed" }
+  - { name: attest-api, scope: act, notes: "seal matches and flags as attestations" }
+memory:
+  state_store: edumanage (supabase)
+  blackboard: false
+wallet:
+  template: wallet.template.json
+  wallet_id: "school-paybill-wallet (see bursar-wallet.json)"
+evals:
+  suite: bursar-reconciliation-v1
+  pass_bar: ">= 99% correct matches on the fixture term; 0 unattested actions"
+  last_result: ""
+deployment:
+  runs_on: vercel
+  schedule: on-event (callback) + daily close
+  supervisor: vercel

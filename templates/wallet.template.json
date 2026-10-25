@@ -1,0 +1,31 @@
+{
+  "wallet_spec_version": "0.1",
+  "wallet_id": "",
+  "owner": "",
+  "operated_by_agent": "",
+  "rail": {
+    "type": "mpesa",
+    "instrument": "till | paybill | stk-push",
+    "shortcode": "",
+    "custody": "owner",
+    "note": "The agent never holds funds. It holds bounded permission to initiate movement on the owner's own till/paybill; Tuma verifies, it never custodies."
+  },
+  "policy": {
+    "currency": "KES",
+    "per_transaction_limit": 0,
+    "daily_limit": 0,
+    "payee_allowlist": [],
+    "approval": {
+      "above_amount": 0,
+      "approver": "",
+      "channel": "human explicit approval, on record"
+    },
+    "active_hours": "00:00-23:59 Africa/Nairobi",
+    "kill_switch": "owner can suspend the wallet instantly; suspension is itself attested"
+  },
+  "evidence": {
+    "source_of_truth": "Safaricom Daraja callbacks only (STK result / C2B confirmation) — never screenshots, never agent self-report",
+    "on_match": "issue attestation: payment.matched",
+    "on_unmatched": "hold, alert owner, never auto-release"
+  }
+}

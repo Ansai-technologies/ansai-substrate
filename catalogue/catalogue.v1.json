@@ -1,0 +1,152 @@
+[
+ {
+  "name": "WolframAlpha",
+  "job": "Answer maths, science and factual computation questions.",
+  "endpoint": "https://api.wolframalpha.com/v2/query (also LLM API: https://www.wolframalpha.com/api/v1/llm-api)",
+  "auth": "Free API key (AppID) sent as a query parameter",
+  "free_tier": "Free AppID: up to 2,000 non-commercial API calls/month (official Wolfram products page)",
+  "verified": "2026-10-25: keyless call returned HTTP 400 {\"status\":400,\"message\":\"Appid Missing\"} \u2014 endpoint live, key enforced.",
+  "route": "api-wrap",
+  "notes": "Strong door, just locked: wrap once the founder creates a free AppID and parks it in the gateway vault. Free tier is non-commercial only; commercial use needs a paid plan."
+ },
+ {
+  "name": "VirusTotal",
+  "job": "Check a file, URL, domain or IP against 70+ antivirus engines.",
+  "endpoint": "https://www.virustotal.com/api/v3/ (e.g. GET /urls/{id}, GET /files/{hash})",
+  "auth": "Free API key in the x-apikey header",
+  "free_tier": "Public API: 4 requests/minute, 500/day, 15,500/month; non-commercial use only",
+  "verified": "2026-10-25: keyless GET /api/v3/urls/{id} returned HTTP 401 AuthenticationRequiredError 'X-Apikey header is missing'.",
+  "route": "api-wrap",
+  "notes": "Free key from a VirusTotal account. Terms forbid commercial products on the public API \u2014 fine for Ansai's internal agents, revisit before selling access."
+ },
+ {
+  "name": "HaveIBeenPwned",
+  "job": "Check whether an email or a password has appeared in known data breaches.",
+  "endpoint": "https://haveibeenpwned.com/api/v3/breachedaccount/{account} and https://api.pwnedpasswords.com/range/{hash-prefix}",
+  "auth": "Split: Pwned Passwords range API needs no key; the v3 breach-lookup API needs a paid key in the hibp-api-key header",
+  "free_tier": "Pwned Passwords: free, keyless, no imposed rate limit (official support docs). v3 API: paid only, from $5.29/month for 10 requests/minute (Oct 2026 pricing)",
+  "verified": "2026-10-25: keyless GET api.pwnedpasswords.com/range/21BD1 returned HTTP 200 with real hash-suffix data; keyless v3 call returned HTTP 401 'Access denied due to missing hibp-api-key'.",
+  "route": "api-wrap",
+  "notes": "Wrap the free keyless Pwned Passwords endpoint now (password-breach check); the paid v3 email-lookup can be added later only if the job earns its $5.29/month."
+ },
+ {
+  "name": "Semantic Scholar",
+  "job": "Search 214M+ academic papers and follow citations.",
+  "endpoint": "https://api.semanticscholar.org/graph/v1/paper/search",
+  "auth": "None required; optional free API key (x-api-key header) strongly recommended",
+  "free_tier": "Free. Keyless traffic shares one global pool and is throttled under load; a free personal key gets an introductory 1 request/second across all endpoints",
+  "verified": "2026-10-25: keyless live test returned HTTP 429 (rate limited), matching the earlier ansai-utils paper_search result. Endpoint and docs live (semanticscholar.org/product/api).",
+  "route": "api-wrap",
+  "notes": "Tool already built in ansai-utils; it works intermittently keyless. A free API key (requested from Semantic Scholar, delivered by email) makes it dependable \u2014 founder action to request one."
+ },
+ {
+  "name": "Archive.org",
+  "job": "Find old copies of web pages and search the Internet Archive's media library.",
+  "endpoint": "https://archive.org/wayback/available ; https://archive.org/advancedsearch.php ; https://archive.org/metadata/{identifier}",
+  "auth": "None for lookup/search/metadata",
+  "free_tier": "Free, keyless, no published quota for these read endpoints",
+  "verified": "2026-10-25: keyless availability call returned HTTP 200 with a real snapshot (google.com, archived 2026-10-24); advancedsearch returned HTTP 200 with 999,913 results for a title query.",
+  "route": "api-wrap",
+  "notes": "Fully open door \u2014 the reference case. wayback_lookup already runs in ansai-utils; add advancedsearch/metadata as archive_search next."
+ },
+ {
+  "name": "remove.bg",
+  "job": "Remove the background from an image automatically.",
+  "endpoint": "https://api.remove.bg/v1.0/removebg (POST)",
+  "auth": "API key in the X-Api-Key header",
+  "free_tier": "First 50 API calls per month free with a free account key (preview resolution); credits/subscription after that",
+  "verified": "2026-10-25: POST without a key returned HTTP 403 auth_failed 'Please authorize by providing either the Authorization or the X-Api-Key request header'.",
+  "route": "api-wrap",
+  "notes": "Clean single-job API. Wrap once a free key exists in the vault; 50 free calls/month is enough to prove agent value before paying."
+ },
+ {
+  "name": "TinEye",
+  "job": "Reverse image search \u2014 find where an image appears online.",
+  "endpoint": "https://api.tineye.com/rest/search/",
+  "auth": "Paid API key (public/private key pair)",
+  "free_tier": "None. Prepaid search bundles only: from $200 for 5,000 searches ($0.04/search); 1M searches for $10,000",
+  "verified": "2026-10-25: keyless call returned HTTP 401 {\"code\":401,\"messages\":[\"Please provide a valid API key.\"]}",
+  "route": "api-wrap",
+  "notes": "Door exists but the key costs real money up front. Park until a paying job needs reverse image search; no free way to prove value first."
+ },
+ {
+  "name": "Raindrop.io",
+  "job": "Save, organise and search a personal bookmark library.",
+  "endpoint": "https://api.raindrop.io/rest/v1/",
+  "auth": "OAuth 2.0, or a personal test token generated in account settings",
+  "free_tier": "API access is free, including on free accounts; no paid API tier",
+  "verified": "2026-10-25: keyless GET /rest/v1/collections returned HTTP 401 {\"result\":false,\"errorMessage\":\"Unauthorized\"}.",
+  "route": "api-wrap",
+  "notes": "Needs the founder's own account token (it is his personal library, so the key is personal too \u2014 OAuth through the gateway when built, token never exposed to agents)."
+ },
+ {
+  "name": "Cleanup.pictures (via Clipdrop)",
+  "job": "Remove an unwanted object, person or text from a photo.",
+  "endpoint": "https://clipdrop-api.co/cleanup/v1 (POST) \u2014 Cleanup.pictures itself has no API; the API lives in its sibling product Clipdrop (docs: clipdrop.co/apis)",
+  "auth": "API key in the x-api-key header (Clipdrop)",
+  "free_tier": "Small number of free test credits on signup; usage-based paid pricing after that",
+  "verified": "2026-10-25: POST to clipdrop-api.co/cleanup/v1 without a key returned HTTP 401 {\"error\":\"The request is missing authentication: No api key provided\"}. Third-party directories confirm Cleanup.pictures itself offers no API.",
+  "route": "api-wrap",
+  "notes": "Wrap the Clipdrop cleanup endpoint, not the cleanup.pictures website. Same team, same underlying job."
+ },
+ {
+  "name": "Unscreen",
+  "job": "Remove the background from a video automatically.",
+  "endpoint": "https://api.unscreen.com/v1/videos (docs: unscreen.com/api)",
+  "auth": "API key (Unscreen Pro account)",
+  "free_tier": "No free API tier; API access comes with paid Unscreen Pro plans (from ~$9/month for 3 video-minutes)",
+  "verified": "2026-10-25: keyless GET to api.unscreen.com/v1/videos returned HTTP 502 from the host (endpoint exists behind their gateway; no unauthenticated data returned). Docs confirm key-based API under paid Pro plans.",
+  "route": "api-wrap",
+  "notes": "Same parent company as remove.bg (Kaleido). Paid door; park next to TinEye until a video job pays for the key."
+ },
+ {
+  "name": "Printful",
+  "job": "Print merchandise on demand and ship it to a customer when ordered.",
+  "endpoint": "https://api.printful.com/v2/catalog-products and https://api.printful.com/products (v1 catalog)",
+  "auth": "OAuth 2.0 for v2 / account API tokens for store operations; parts of the v1 catalog are publicly readable",
+  "free_tier": "The API itself is free \u2014 you pay only for products actually printed and shipped",
+  "verified": "2026-10-25: keyless GET api.printful.com/products returned HTTP 200 with the real product catalogue; keyless GET /v2/catalog-products returned HTTP 401 'This endpoint requires Oauth authentication!'.",
+  "route": "api-wrap",
+  "notes": "Catalogue browsing can wrap today with no key at all; ordering needs the founder's Printful store connected by OAuth through the gateway."
+ },
+ {
+  "name": "Project Gutenberg (Gutendex)",
+  "job": "Search and fetch 70,000+ free public-domain books.",
+  "endpoint": "https://gutendex.com/books (also /books?search=, /books?ids=)",
+  "auth": "None",
+  "free_tier": "Free, keyless, community-run mirror of the Gutenberg catalogue (Project Gutenberg itself asks heavy users to mirror politely)",
+  "verified": "Keyless live test 2026-10-25: GET gutendex.com/books?ids=11 -> HTTP 301 redirect, followed to 200 with real book JSON. Door open, keyless.",
+  "route": "resource",
+  "notes": "Best exposed as catalogue RESOURCES (search + read a book) rather than a single tool call \u2014 content library, not a one-shot job. Works today with zero keys."
+ },
+ {
+  "name": "AlternativeTo",
+  "job": "Find alternative software for a given app or service.",
+  "endpoint": "None \u2014 no official public API found (https://alternativeto.net/api/ tested)",
+  "auth": "n/a",
+  "free_tier": "n/a",
+  "verified": "2026-10-25: GET alternativeto.net/api/ returned HTTP 404; documentation searches surfaced no official developer API (a legacy API was partner-restricted and is not publicly documented).",
+  "route": "drop",
+  "notes": "No machine door. The job itself ('what else does X?') is answerable by an agent using web search over the public site as a human would \u2014 catalogue-only reference, no wrap."
+ },
+ {
+  "name": "JustWatch",
+  "job": "Find which streaming service offers a film or show in a given country.",
+  "endpoint": "https://apis.justwatch.com \u2014 Partner Integrations API only",
+  "auth": "Partner API key issued manually after applying (data-partner@justwatch.com); no self-serve signup",
+  "free_tier": "None public. The unofficial endpoint used by their own apps prohibits commercial use and is unsupported",
+  "verified": "2026-10-25: docs check \u2014 official Partner Integrations documentation (apis.justwatch.com/docs/content_partner) confirms API access is partner-only; unofficial-API maintainers state JustWatch 'doesn't offer an open API and doesn't plan to'.",
+  "route": "drop",
+  "notes": "Door exists but opens only to negotiated partners. Not worth a partnership chase for a catalogue entry; drop and revisit only if a client product needs streaming data."
+ },
+ {
+  "name": "DownDetector",
+  "job": "Check whether a popular service is reported down right now.",
+  "endpoint": "Downdetector Enterprise API (docs: cookbooks.downdetectorapi.com)",
+  "auth": "OAuth 2.0 client ID/secret issued to Enterprise subscribers",
+  "free_tier": "No free API tier. API access is bundled in the paid Enterprise plan only (custom pricing); the free consumer plan has no API",
+  "verified": "2026-10-25: docs check \u2014 Downdetector's own API cookbooks describe credentials issued only 'upon subscribing to the Downdetector Enterprise API'; plan pages confirm API access sits in the Enterprise tier.",
+  "route": "downgrade-to-rebuild",
+  "notes": "The job ('is X up?') is simple to rebuild natively: an HTTP probe + public status-page check (already the spirit of our in-house monitoring). Downgrade: build outage_check ourselves instead of buying the enterprise door."
+ }
+]
