@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ansai Platform — Agent Console</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *{font-family:Inter,system-ui,sans-serif} .mono{font-family:"JetBrains Mono",monospace}
+  body{background:#07090f;color:#e7ebf4}
+  .glass{background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(10px)}
+  .card{border-radius:18px}
+  .chip{border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px 11px;font-size:12px;cursor:pointer;user-select:none;transition:.15s}
+  .chip:hover{border-color:rgba(125,211,252,.6)} .chip.on{background:#0ea5e9;border-color:#0ea5e9;color:#fff;font-weight:600}
+  .chip.seat-on{background:#4f46e5;border-color:#4f46e5;color:#fff;font-weight:600}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+  .msg{animation:up .25s ease} @keyframes up{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .grad{background:linear-gradient(90deg,#38bdf8,#818cf8,#e879f9);-webkit-background-clip:text;background-clip:text;color:transparent}
+  ::-webkit-scrollbar{width:8px;height:8px} ::-webkit-scrollbar-thumb{background:#26314a;border-radius:8px}
+  textarea:focus,input:focus{outline:2px solid #0ea5e9;outline-offset:-1px}
+  .toggle{width:38px;height:21px;border-radius:999px;background:#26314a;position:relative;cursor:pointer;flex-shrink:0;transition:.15s}
+  .toggle:after{content:"";position:absolute;top:3px;left:3px;width:15px;height:15px;border-radius:50%;background:#94a3b8;transition:.15s}
+  .toggle.on{background:#059669}.toggle.on:after{left:20px;background:#fff}
+</style>
+</head>
+<body class="min-h-screen">
+<div class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside class="w-[300px] shrink-0 border-r border-white/10 p-5 hidden lg:flex flex-col gap-5 sticky top-0 h-screen overflow-y-auto">
+    <div>
+      <div class="text-[11px] tracking-[.22em] text-sky-400 font-bold">ANSAI TECHNOLOGIES</div>
+      <h1 class="text-2xl font-extrabold mt-1">Agent <span class="grad">Platform</span></h1>
+      <p class="text-[13px] text-slate-400 mt-1">The Baraza, managed. Interact, convene, approve.</p>
+      <div class="flex gap-2 mt-3">
+        <a href="/" class="chip">← 3D Office floor</a>
+        <span class="chip on">Platform</span>
+      </div>
+    </div>
+    <div>
+      <div class="text-[11px] uppercase tracking-widest text-slate-500 font-bold mb-2">Agents — click to manage</div>
+      <div id="agents" class="flex flex-col gap-2"></div>
+    </div>
+    <div class="mt-auto text-[11px] text-slate-500 leading-relaxed">
+      Council seats run through the LiteLLM gateway (workhorse / thinker). Sentinel is the house watchman — not a seat — Meta direct, no tools.
+      Writes, shell and sends by seats block on your approval. Decisions, merges and money stay your hand.
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-w-0 p-5 flex flex-col gap-4 max-w-[1100px] mx-auto w-full">
+    <header class="glass card px-5 py-4 flex flex-wrap items-center gap-4">
+      <div><div class="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Live console</div>
+      <div class="font-bold text-lg">Council feed</div></div>
+      <div class="flex gap-2 ml-auto flex-wrap" id="stats">
+        <span class="chip mono" id="stat-agents">agents …</span>
+        <span class="chip mono" id="stat-approvals">approvals …</span>
+        <span class="chip mono" id="stat-gateway">gateway …</span>
+      </div>
+    </header>
+
+    <section class="glass card p-4">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-[12px] font-bold text-slate-300 mr-1">Talk to:</span>
+        <span id="targets" class="flex gap-2 flex-wrap"></span>
+        <button id="convene" class="ml-auto bg-gradient-to-r from-sky-500 to-indigo-500 hover:opacity-90 text-white text-[13px] font-bold rounded-full px-4 py-2">Convene council on this topic</button>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <textarea id="input" rows="2" maxlength="500" placeholder="Message the selected agents… (they read the shared feed, and each other)"
+          class="flex-1 bg-black/30 border border-white/10 rounded-2xl px-4 py-3 text-[14px] resize-y"></textarea>
+        <button id="send" class="bg-sky-500 hover:bg-sky-400 text-white font-bold rounded-2xl px-6 text-[14px]">Send</button>
+      </div>
+      <p class="text-[11px] text-slate-500 mt-2">Send = parallel replies. <b class="text-slate-300">Convene</b> = a real session: seats speak in order, each reading the previous seats, then Jabari synthesises. No selection = Jabari.</p>
+    </section>
+
+    <section id="feed" class="flex flex-col gap-3 pb-4"></section>
+  </main>
+
+  <!-- Right rail -->
+  <aside class="w-[340px] shrink-0 p-5 hidden xl:flex flex-col gap-4 sticky top-0 h-screen overflow-y-auto">
+    <div class="glass card p-4" id="detail">
+      <div class="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Agent detail</div>
+      <p class="text-[13px] text-slate-400 mt-2">Select an agent in the left panel to manage it.</p>
+    </div>
+    <div class="glass card p-4">
+      <div class="flex items-center"><div class="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Approvals</div>
+      <span class="ml-auto chip mono" id="appr-count">0 pending</span></div>
+      <div id="approvals" class="flex flex-col gap-2 mt-3 text-[13px] text-slate-400">none</div>
+    </div>
+    <div class="glass card p-4">
+      <div class="flex items-center"><div class="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Council blackboard</div>
+      <a href="#" id="boardrefresh" class="ml-auto text-sky-400 text-[12px]">refresh</a></div>
+      <div id="board" class="text-[12px] leading-relaxed text-slate-400 mt-2 max-h-[420px] overflow-y-auto">loading…</div>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let AG=[], selected="jabari", targets=new Set(["jabari"]), lastSeq=0, feedInit=false;
+const STATE_COLOR={idle:"#38bdf8",working:"#f59e0b",thinking:"#a78bfa",error:"#f87171"};
+
+async function loadAgents(){
+  try{ AG=await (await fetch("/api/platform/agents")).json(); }catch(_){ return; }
+  $("stat-agents").textContent = AG.filter(a=>a.enabled).length+"/"+AG.length+" enabled";
+  const box=$("agents"); box.innerHTML="";
+  for(const a of AG){
+    const d=document.createElement("div");
+    d.className="glass card px-3 py-2.5 flex items-center gap-3 cursor-pointer hover:border-sky-400/40"+(selected===a.id?" ring-1 ring-sky-400":"");
+    d.innerHTML=`<span class="dot" style="background:${STATE_COLOR[a.state]||"#64748b"}"></span>
+      <div class="min-w-0 flex-1"><div class="font-bold text-[13.5px] truncate">${esc(a.name)} ${a.seat?"":'<span class="text-[10px] text-slate-400 font-semibold">· watchman</span>'}</div>
+      <div class="text-[11px] text-slate-400 truncate">${esc(a.role)} · ${esc(a.route.label)}</div>
+      <div class="text-[11px] text-slate-500 truncate">${esc(a.last_activity||"")}</div></div>
+      <div class="toggle ${a.enabled?"on":""}" title="enable/disable"></div>`;
+    d.querySelector(".toggle").onclick=async e=>{e.stopPropagation();
+      await fetch("/api/agents/"+a.id+"/enabled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!a.enabled})}); loadAgents();};
+    d.onclick=()=>{selected=a.id; renderDetail(); loadAgents();};
+    box.appendChild(d);
+  }
+  renderTargets();
+}
+function renderTargets(){
+  const box=$("targets"); box.innerHTML="";
+  for(const a of AG){
+    const b=document.createElement("button");
+    b.className="chip"+(targets.has(a.id)?(a.seat?" seat-on":" on"):"");
+    b.textContent="@"+a.name; b.disabled=!a.enabled; if(!a.enabled) b.style.opacity=".35";
+    b.onclick=()=>{ targets.has(a.id)?targets.delete(a.id):targets.add(a.id); renderTargets(); };
+    box.appendChild(b);
+  }
+}
+function renderDetail(){
+  const a=AG.find(x=>x.id===selected); if(!a) return;
+  $("detail").innerHTML=`<div class="text-[11px] uppercase tracking-widest text-slate-400 font-bold">Agent detail</div>
+    <div class="flex items-center gap-2 mt-2"><span class="dot" style="background:${STATE_COLOR[a.state]||"#64748b"}"></span>
+    <span class="font-extrabold text-[17px]">${esc(a.name)}</span>
+    <span class="chip mono ml-auto">${esc(a.state)}</span></div>
+    <div class="text-[13px] text-slate-300 mt-1">${esc(a.role)}</div>
+    <div class="mono text-[11.5px] text-slate-400 mt-2">route: ${esc(a.route.label)}<br>group: ${esc(a.route.group)}<br>type: ${a.seat?"council seat":"house watchman — not a seat"}<br>last: ${esc(a.last_activity||"waiting")}</div>
+    <div class="flex gap-2 mt-3">
+      <button class="chip ${a.enabled?"":"on"}" id="d-toggle">${a.enabled?"Disable agent":"Enable agent"}</button>
+      <button class="chip" id="d-chat">Chat 1:1</button>
+    </div>
+    <p class="text-[11px] text-slate-500 mt-3">${a.seat?"Seat chat executes with the worker tool profile: reads free; writes, shell and sends wait for your approval card.":"Sentinel answers direct from Meta (muse-wonder-1.0) with a watchman prompt. No tools, no Hermes session."}</p>`;
+  $("d-toggle").onclick=async()=>{ await fetch("/api/agents/"+a.id+"/enabled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled:!a.enabled})}); loadAgents(); };
+  $("d-chat").onclick=()=>{ targets=new Set([a.id]); renderTargets(); $("input").focus(); };
+}
+function addEntry(e){
+  const feed=$("feed"); const d=document.createElement("div");
+  const who = e.author==="human" ? "Melchizedek (founder)" : e.author==="system" ? "· system ·" : (AG.find(a=>a.id===e.author)?.name || e.author);
+  const mine = e.author==="human";
+  d.className="msg glass card px-4 py-3 "+(mine?"border-sky-400/30":"");
+  d.innerHTML=`<div class="flex items-baseline gap-2"><b class="text-[13px] ${mine?"text-sky-300":e.author==="system"?"text-slate-500":"text-indigo-300"}">${esc(who)}</b>
+    <span class="mono text-[10.5px] text-slate-500">${esc((e.ts||"").replace("T"," ").slice(0,19))} · #${e.seq}</span></div>
+    <div class="text-[14px] leading-relaxed mt-1 whitespace-pre-wrap">${esc(e.text)}</div>`;
+  feed.appendChild(d);
+}
+async function pollFeed(){
+  try{
+    const j=await (await fetch("/api/chat/log?since="+lastSeq)).json();
+    for(const e of (j.entries||[])){ lastSeq=Math.max(lastSeq,e.seq); addEntry(e); }
+    if(j.entries?.length) window.scrollTo({top:document.body.scrollHeight,behavior:"smooth"});
+  }catch(_){}
+}
+async function pollApprovals(){
+  try{
+    const j=await (await fetch("/api/approvals/pending")).json();
+    const p=j.pending||[]; $("appr-count").textContent=p.length+" pending"; $("stat-approvals").textContent=p.length+" approvals pending";
+    const box=$("approvals"); box.innerHTML=p.length?"":"none";
+    for(const a of p){
+      const d=document.createElement("div"); d.className="glass card p-3";
+      d.innerHTML=`<div class="text-[12.5px] text-slate-200">${esc(a.agent||"agent")} wants: <b>${esc(a.action||a.summary||"action")}</b></div>
+        <div class="mono text-[11px] text-slate-400 mt-1">${esc(JSON.stringify(a).slice(0,220))}</div>
+        <div class="flex gap-2 mt-2"><button class="chip on">Approve</button><button class="chip">Deny</button></div>`;
+      const [ok,no]=d.querySelectorAll("button");
+      ok.onclick=async()=>{await fetch("/api/approvals/"+a.id+"/approve",{method:"POST"}); pollApprovals();};
+      no.onclick=async()=>{await fetch("/api/approvals/"+a.id+"/deny",{method:"POST"}); pollApprovals();};
+      box.appendChild(d);
+    }
+  }catch(_){}
+}
+async function loadBoard(){
+  const box=$("board");
+  try{
+    const j=await (await fetch("/api/blackboard")).json();
+    if(!j.ok){ box.textContent="unavailable: "+(j.error||"error"); return; }
+    box.innerHTML=`<b class="text-slate-200">${esc(j.cycle||"latest cycle")}</b><div class="mt-1 whitespace-pre-wrap">${esc((j.tail||"").slice(-2200))}</div>`;
+    $("stat-gateway").textContent="board "+(j.sha||"");
+  }catch(_){ box.textContent="unavailable"; }
+}
+async function send(convene){
+  const text=$("input").value.trim(); if(!text) return;
+  $("input").value="";
+  try{
+    if(convene){
+      const parts=[...targets].filter(id=>id!=="sentinel");
+      const r=await fetch("/api/orchestrate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({topic:text,participants:parts})});
+      const j=await r.json(); if(!r.ok) alert(j.error||"convene failed");
+    }else{
+      const r=await fetch("/api/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({targets:[...targets],message:text})});
+      const j=await r.json(); if(!r.ok) alert(j.error||"send failed");
+    }
+    setTimeout(pollFeed,400);
+  }catch(_){ alert("office unreachable"); }
+}
+$("send").onclick=()=>send(false);
+$("convene").onclick=()=>send(true);
+$("input").onkeydown=e=>{ if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)) send(false); };
+$("boardrefresh").onclick=e=>{e.preventDefault(); loadBoard();};
+
+loadAgents().then(()=>{renderDetail(); pollFeed();});
+setInterval(pollFeed,2500); setInterval(loadAgents,6000); setInterval(pollApprovals,5000); setInterval(loadBoard,300000);
+pollApprovals(); loadBoard();
+</script>
+</body>
+</html>

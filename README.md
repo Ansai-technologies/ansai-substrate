@@ -63,8 +63,18 @@ call runs, walking to the whiteboard on handoffs, shaking on errors, with
 speech bubbles showing what each agent is doing.
 
 The side panel lists live agent state and has a **chat box**: pick an agent
-and talk to it. Chat is text-only — the agent answers with no tools attached,
-so it can never move money, send messages, or touch integrations.
+and talk to it. (Updated 2026-11-15: office chat seats execute with the worker
+tool profile — reads free, writes/shell/sends gated by founder approval cards
+in the UI. The 3D office remains the live floor.)
+
+**Ansai Platform** (`/platform`, office/static/platform.html): the modern
+agent console — live council feed, per-agent management (enable/disable,
+model route, state), approval cards, read-only blackboard panel, direct and
+@mention chat, and **Convene council**: a sequential session where seats
+speak in order, each reading the previous replies, then the chair
+synthesises. Sentinel (house watchman, not a seat) is a participant via a
+direct Meta call — text only, no tools. Start the office as above, then
+open http://localhost:8080/platform.
 
 ## Layout
 

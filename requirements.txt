@@ -4,6 +4,7 @@
 # FastMCP API (from mcp.server.fastmcp import FastMCP); mcp 2.x renamed it
 # to MCPServer with a changed API. Revisit when migrating to 2.x.
 agno>=1.0
+openai>=1.0  # required by agno.models.openai (office/mini/mother agents)
 litellm>=1.0
 mcp>=1.0,<2
 pytest>=8.0
