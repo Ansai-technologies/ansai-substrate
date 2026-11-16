@@ -1,0 +1,7 @@
+tunnel: 6b405f1f-51f9-40af-b034-daf1a04c0a68
+credentials-file: /home/amasai/.cloudflared/6b405f1f-51f9-40af-b034-daf1a04c0a68.json
+
+ingress:
+  - hostname: agents.ansaitechnologies.co.ke
+    service: http://localhost:8080
+  - service: http_status:404

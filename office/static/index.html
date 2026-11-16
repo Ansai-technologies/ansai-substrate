@@ -18,14 +18,14 @@
   header p{margin:2px 0 0;font-size:12px;color:var(--muted)}
   #conn{width:9px;height:9px;border-radius:50%;background:#d6cfc2;margin-left:auto}
   #conn.live{background:#22c55e}
-  main{display:flex;gap:16px;padding:16px;max-width:1340px;margin:0 auto;
+  main{display:flex;gap:16px;padding:16px;max-width:1440px;margin:0 auto;
     align-items:flex-start}
   #stage{flex:1;min-width:0;background:linear-gradient(180deg,#fdfcf9,#f7f3ea);
     border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
     box-shadow:0 2px 12px rgba(60,50,30,.05)}
   #scene{width:100%;height:600px;cursor:grab}
   #scene canvas{display:block;width:100%;height:100%}
-  aside{width:330px;flex-shrink:0;display:flex;flex-direction:column;gap:12px}
+  aside{width:430px;flex-shrink:0;display:flex;flex-direction:column;gap:12px}
   .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
     padding:12px 14px;box-shadow:0 2px 12px rgba(60,50,30,.05)}
   .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
@@ -49,10 +49,27 @@
   .ev{font-size:12px;color:var(--muted);display:flex;gap:8px;align-items:baseline}
   .ev .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;align-self:center}
   .ev b{color:var(--ink);font-weight:600}
-  #chatlog{height:220px;overflow-y:auto;display:flex;flex-direction:column;
-    gap:8px;margin-bottom:10px}
-  .msg{font-size:13px;line-height:1.45;padding:8px 11px;border-radius:12px;
-    max-width:94%;word-wrap:break-word}
+  #chatlog{height:min(56vh,560px);min-height:340px;overflow-y:auto;display:flex;
+    flex-direction:column;gap:10px;margin-bottom:10px;scroll-behavior:smooth}
+  .msg{font-size:14px;line-height:1.6;padding:10px 13px;border-radius:14px;
+    max-width:100%;word-wrap:break-word;overflow-wrap:anywhere;white-space:pre-wrap}
+  .msg .more{border:none;background:transparent;color:var(--accent);font:inherit;
+    font-size:12px;font-weight:700;cursor:pointer;padding:2px 0 0}
+  .msg.clamped .body{display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden}
+  #chatcard.expanded{position:fixed;inset:18px;z-index:50;display:flex;flex-direction:column;
+    box-shadow:0 24px 80px rgba(30,25,15,.35)}
+  #chatcard.expanded #chatlog{flex:1;height:auto;max-height:none}
+  #expandchat{float:right;border:1px solid var(--line);background:#fff;border-radius:8px;
+    font-size:11px;font-weight:600;padding:3px 9px;cursor:pointer;color:var(--muted)}
+  #mentions{position:absolute;left:0;right:0;bottom:calc(100% + 6px);background:#fff;
+    border:1px solid var(--line);border-radius:12px;box-shadow:0 14px 40px rgba(60,50,30,.16);
+    overflow:hidden;display:none;z-index:20}
+  #mentions.open{display:block}
+  #mentions button{display:flex;gap:9px;align-items:center;width:100%;text-align:left;
+    border:none;background:#fff;padding:9px 11px;cursor:pointer;font:inherit;font-size:13px}
+  #mentions button.sel{background:#eef2ff}
+  #mentions button img{width:26px;height:26px;border-radius:50%;object-fit:cover}
+  #mentions button span{color:var(--muted);font-size:11.5px}
   .msg.you{background:#eef2ff;align-self:flex-end;border-bottom-right-radius:4px}
   .msg.you b.at{font-weight:700}
   .msg.them{background:#f4f1ea;align-self:flex-start;border-bottom-left-radius:4px}
@@ -91,12 +108,16 @@
   #apprBadge{display:none;background:#b45309;color:#fff;font-size:10px;
     border-radius:999px;padding:2px 8px;margin-left:6px;vertical-align:1px}
   #apprBadge.show{display:inline-block}
+  #board{font-size:12px;line-height:1.5;color:var(--muted);max-height:220px;
+    overflow-y:auto;word-wrap:break-word}
+  .boardhint{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5}
   #hint{font-size:11.5px;color:var(--muted);margin-bottom:8px;line-height:1.5}
   #hint code{background:#f4f1ea;border:1px solid var(--line);border-radius:6px;
     padding:1px 5px;font-size:11px;color:var(--ink)}
-  #composer{display:flex;gap:8px}
+  #composer{display:flex;gap:8px;align-items:flex-end}
   #chatin{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 12px;
-    font-size:13px;font-family:inherit;background:#fff;color:var(--ink)}
+    font-size:14px;line-height:1.45;font-family:inherit;background:#fff;color:var(--ink);
+    resize:vertical;min-height:44px;max-height:140px}
   #chatin:focus{outline:2px solid #c7d2fe;border-color:var(--accent)}
   #send{border:none;background:var(--accent);color:#fff;border-radius:10px;
     padding:0 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
@@ -109,6 +130,7 @@
 </head>
 <body>
 <header>
+  <a href="/platform" style="margin-left:12px;font-size:13px;color:#7dd3fc;text-decoration:none">Open Ansai Platform →</a>
   <div>
     <h1>Ansai Office</h1>
     <p>live agent floor — the Baraza at work</p>
@@ -119,15 +141,21 @@
   <div id="stage"><div id="scene"></div></div>
   <aside>
     <div class="card"><h2>Council</h2><div id="agents"></div></div>
+    <div class="card"><h2>Council blackboard</h2>
+      <div id="board">loading…</div>
+      <div class="boardhint"><a href="#" id="boardrefresh">refresh</a> · read-only, from ansai-core council/log.md</div>
+    </div>
     <div class="card"><h2>Activity</h2><div id="feed"></div></div>
-    <div class="card"><h2>Baraza chat<span id="apprBadge"></span></h2>
+    <div class="card" id="chatcard"><h2>Baraza chat<span id="apprBadge"></span><button id="expandchat" title="Expand chat for reading">Expand ⤢</button></h2>
       <div id="approvals"></div>
       <div id="chatlog"></div>
       <div id="hint">Type <code>@name</code> to call an agent, <code>@everyone</code>
-        for the whole Baraza (no @ = Jabari answers). Agents can use tools now —
-        reads run free, writes pop an approval card here first.</div>
-      <div id="composer">
-        <input id="chatin" placeholder="@tangaza what's the plan today?" autocomplete="off">
+        for the six council seats (no @ = Jabari answers). <code>@sentinel</code> is
+        Sentinel, House watchman (not a seat) — text-only, no tools. Council seats
+        can use tools now — reads run free, writes pop an approval card here first.</div>
+      <div id="composer" style="position:relative">
+        <div id="mentions" role="listbox"></div>
+        <textarea id="chatin" rows="2" placeholder="Type @ to pick an agent…  (Enter sends, Shift+Enter = new line)" autocomplete="off"></textarea>
         <button id="send">Send</button>
       </div>
     </div>
@@ -145,6 +173,10 @@ const ROSTER = {
   akiba:  {name:"Akiba",   role:"Finance & Ops",        color:"#16a34a"},
   dadisi: {name:"Dadisi",  role:"Labs scout",           color:"#7c3aed"},
 };
+// Sentinel: House watchman (not a seat) — 7th chat participant only. No desk,
+// no 3D character, no vote; chat replies are text-only (no tools, server-side).
+const SENTINEL = {name:"Sentinel", role:"House watchman (not a seat)", color:"#374151"};
+const CHAT_ROSTER = {...ROSTER, sentinel:SENTINEL};
 // desk spot per agent: character stands on the +z side of their desk
 const WORKSPOTS = {
   jabari: {x:-3.6, z: 2.2, rot:-0.28, big:true},
@@ -676,15 +708,16 @@ es.onmessage = e => { try { applyEvent(JSON.parse(e.data)); } catch(_){} };
 const rowEls = {};
 function buildAgentRows(){
   const boxEl = document.getElementById('agents'); boxEl.innerHTML = '';
-  for (const id of Object.keys(ROSTER)){
+  for (const id of Object.keys(CHAT_ROSTER)){
     const row = document.createElement('div'); row.className = 'agent';
     const img = document.createElement('img');
-    img.className = 'ava'; img.src = 'static/portraits/' + id + '.webp'; img.alt = ROSTER[id].name;
+    img.className = 'ava'; img.src = 'static/portraits/' + id + '.webp'; img.alt = CHAT_ROSTER[id].name;
+    img.onerror = () => { img.style.display = 'none'; };  // Sentinel has no portrait
     const who = document.createElement('div'); who.className = 'who';
-    const b = document.createElement('b'); b.textContent = ROSTER[id].name;
+    const b = document.createElement('b'); b.textContent = CHAT_ROSTER[id].name;
     const span = document.createElement('span');
-    span.textContent = ROSTER[id].role;
-    span.title = ROSTER[id].role;
+    span.textContent = CHAT_ROSTER[id].role;
+    span.title = CHAT_ROSTER[id].role;
     who.appendChild(b); who.appendChild(span);
     const pill = document.createElement('div'); pill.className = 'pill idle'; pill.textContent = 'idle';
     row.appendChild(img); row.appendChild(who); row.appendChild(pill);
@@ -704,9 +737,9 @@ const feedEl = document.getElementById('feed');
 function feed(ev){
   const d = document.createElement('div'); d.className = 'ev';
   const dot = document.createElement('span'); dot.className = 'dot';
-  dot.style.background = (ROSTER[ev.agent] || {}).color || '#8a8177';
+  dot.style.background = (CHAT_ROSTER[ev.agent] || {}).color || '#8a8177';
   const label = document.createElement('span');
-  const who = (ROSTER[ev.agent] || {}).name || ev.agent;
+  const who = (CHAT_ROSTER[ev.agent] || {}).name || ev.agent;
   const what = (ev.detail || ev.type || '').replace(/^in:\s*/, '💬 ').replace(/^out:\s*/, '↩ ');
   label.innerHTML = `<b>${escapeHtml(who)}</b> ${escapeHtml(what.slice(0, 80))}`;
   d.appendChild(dot); d.appendChild(label);
@@ -733,11 +766,11 @@ function parseMentions(text){
   const seen = new Set(), out = [];
   for (const m of text.matchAll(/@([a-z]+)/gi)){
     const word = m[1].toLowerCase();
-    if (word === 'everyone'){                       // @everyone: the whole Baraza
+    if (word === 'everyone'){                       // @everyone: six council seats only (not Sentinel)
       for (const id of Object.keys(ROSTER)) if (!seen.has(id)){ seen.add(id); out.push(id); }
       continue;
     }
-    if (ROSTER[word] && !seen.has(word)){ seen.add(word); out.push(word); }
+    if (CHAT_ROSTER[word] && !seen.has(word)){ seen.add(word); out.push(word); }
   }
   return out;
 }
@@ -745,8 +778,8 @@ function highlightMentions(text){
   return escapeHtml(text).replace(/@([a-zA-Z]+)/g, (m, name) => {
     const id = name.toLowerCase();
     if (id === 'everyone') return `<b class="at at-all">@${escapeHtml(name)}</b>`;
-    if (!ROSTER[id]) return m;
-    return `<b class="at" style="color:${ROSTER[id].color}">@${escapeHtml(name)}</b>`;
+    if (!CHAT_ROSTER[id]) return m;
+    return `<b class="at" style="color:${CHAT_ROSTER[id].color}">@${escapeHtml(name)}</b>`;
   });
 }
 function addOwnMsg(text){
@@ -760,17 +793,26 @@ function addSysNote(text){
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 function addReply(id, text){
-  const meta = ROSTER[id];
+  const meta = CHAT_ROSTER[id];
   const d = document.createElement('div'); d.className = 'msg them';
-  d.innerHTML = `<div class="head"><img src="static/portraits/${id}.webp" alt="">
-    <b style="color:${meta.color}">${meta.name}</b></div>${escapeHtml(text)}`;
+  const LONG = 700;
+  const clamped = text.length > LONG;
+  if (clamped) d.classList.add('clamped');
+  d.innerHTML = `<div class="head"><img src="static/portraits/${id}.webp" alt="" onerror="this.style.display='none'">
+    <b style="color:${meta.color}">${meta.name}</b></div><div class="body">${highlightMentions(text)}</div>` +
+    (clamped ? `<button class="more">Show full message (${text.length} chars)</button>` : '');
+  if (clamped){
+    const btn = d.querySelector('.more');
+    btn.onclick = () => { const on = d.classList.toggle('clamped');
+      btn.textContent = on ? `Show full message (${text.length} chars)` : 'Show less'; };
+  }
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 function addTyping(id){
-  const meta = ROSTER[id];
+  const meta = CHAT_ROSTER[id];
   const d = document.createElement('div'); d.className = 'msg typing';
   d.dataset.agent = id;
-  d.innerHTML = `<img src="static/portraits/${id}.webp" alt="">
+  d.innerHTML = `<img src="static/portraits/${id}.webp" alt="" onerror="this.style.display='none'">
     <b style="font-size:11.5px;color:${meta.color}">${meta.name}</b>
     <span class="tdots"><i></i><i></i><i></i></span>`;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
@@ -817,7 +859,7 @@ async function pollChat(){
     for (const e of (j.entries || [])){
       lastSeq = Math.max(lastSeq, e.seq || 0);
       if (e.author === 'human') addOwnMsg(e.text);
-      else if (ROSTER[e.author]){ clearTyping(e.author); addReply(e.author, e.text); }
+      else if (CHAT_ROSTER[e.author]){ clearTyping(e.author); addReply(e.author, e.text); }
       else addSysNote(e.text);                       // system notes
     }
   }catch(_){}
@@ -826,7 +868,62 @@ async function pollChat(){
   for (const id of Object.keys(typingBy)) if (typingBy[id].ts < cutoff) clearTyping(id);
 }
 sendBtn.onclick = send;
-input.onkeydown = e => { if (e.key === 'Enter') send(); };
+/* @mention picker: type @, names appear, click / ↑↓ + Enter-or-Tab picks. */
+const mentionBox = document.getElementById('mentions');
+let mentionItems = [], mentionSel = 0, mentionStart = -1;
+function mentionQuery(){
+  const caret = input.selectionStart, upto = input.value.slice(0, caret);
+  const m = upto.match(/(^|\s)@([a-z]*)$/i);
+  if (!m) return null;
+  return {start: caret - m[2].length - 1, q: m[2].toLowerCase()};
+}
+function closeMentions(){ mentionBox.classList.remove('open'); mentionBox.innerHTML=''; mentionItems=[]; mentionStart=-1; }
+function renderMentions(){
+  mentionBox.innerHTML = '';
+  mentionItems.forEach((a, i) => {
+    const b = document.createElement('button'); if (i===mentionSel) b.className='sel';
+    b.innerHTML = (a.id==='everyone' ? '' : `<img src="static/portraits/${a.id}.webp" alt="" onerror="this.style.display='none'">`) +
+      `<b style="color:${a.color}">@${a.id}</b><span>${escapeHtml(a.name)} — ${escapeHtml(a.role)}</span>`;
+    b.onmousedown = e => { e.preventDefault(); pickMention(i); };
+    mentionBox.appendChild(b);
+  });
+  mentionBox.classList.toggle('open', mentionItems.length > 0);
+}
+function updateMentions(){
+  const hit = mentionQuery();
+  if (!hit) return closeMentions();
+  mentionStart = hit.start;
+  const all = [...Object.entries(CHAT_ROSTER).map(([id,m]) => ({id, ...m})),
+               {id:'everyone', name:'Everyone', role:'six council seats', color:'#b45309'}];
+  mentionItems = all.filter(a => a.id.startsWith(hit.q) || a.name.toLowerCase().startsWith(hit.q));
+  mentionSel = 0;
+  if (mentionItems.length) renderMentions(); else closeMentions();
+}
+function pickMention(i){
+  const a = mentionItems[i]; if (!a) return;
+  const caret = input.selectionStart;
+  const before = input.value.slice(0, mentionStart), after = input.value.slice(caret);
+  input.value = before + '@' + a.id + ' ' + after;
+  const pos = before.length + a.id.length + 2;
+  input.setSelectionRange(pos, pos); input.focus(); closeMentions();
+}
+input.addEventListener('input', updateMentions);
+input.addEventListener('blur', () => setTimeout(closeMentions, 150));
+input.onkeydown = e => {
+  if (mentionBox.classList.contains('open')){
+    if (e.key === 'ArrowDown'){ e.preventDefault(); mentionSel = Math.min(mentionSel+1, mentionItems.length-1); renderMentions(); return; }
+    if (e.key === 'ArrowUp'){ e.preventDefault(); mentionSel = Math.max(mentionSel-1, 0); renderMentions(); return; }
+    if (e.key === 'Enter' || e.key === 'Tab'){ e.preventDefault(); pickMention(mentionSel); return; }
+    if (e.key === 'Escape'){ closeMentions(); return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
+};
+const chatcard = document.getElementById('chatcard');
+document.getElementById('expandchat').onclick = ev => {
+  const on = chatcard.classList.toggle('expanded');
+  ev.target.textContent = on ? 'Close ✕' : 'Expand ⤢';
+  log.scrollTop = log.scrollHeight;
+};
 
 /* ---------------- approval cards ---------------- */
 const apprBox = document.getElementById('approvals');
@@ -843,7 +940,7 @@ async function pollApprovals(){
     for (const rec of list){
       const a = rec.action || {};
       const agentId = rec.agent || (a.payload && a.payload.agent);
-      const meta = (agentId && ROSTER[agentId]) || null;
+      const meta = (agentId && CHAT_ROSTER[agentId]) || null;
       const color = meta ? meta.color : '#8a8177';
       const pay = JSON.stringify(a.payload || {});
       const card = document.createElement('div'); card.className = 'appr';
@@ -870,14 +967,28 @@ async function decideApproval(id, verb, card){
   }catch(_){}
 }
 
+/* ---------------- council blackboard (read-only) ---------------- */
+async function loadBoard(){
+  const box = document.getElementById('board');
+  try{
+    const r = await fetch('/api/blackboard'); const j = await r.json();
+    if (!j.ok){ box.textContent = 'unavailable: ' + (j.error || 'error'); return; }
+    box.innerHTML = `<b style="color:var(--ink)">${escapeHtml(j.cycle || 'latest cycle')}</b><br>` +
+      escapeHtml((j.tail || '').slice(-1400)).replace(/\n/g, '<br>');
+  }catch(_){ box.textContent = 'unavailable: office unreachable'; }
+}
+document.getElementById('boardrefresh').onclick = e => { e.preventDefault(); loadBoard(); };
+
 /* ---------------- boot ---------------- */
 buildAgentRows();
 refreshAgents();
+loadBoard();
 pollChat();                       // render shared history, set the cursor
 pollApprovals();
 setInterval(pollChat, 1200);
 setInterval(pollApprovals, 3000);
 setInterval(refreshAgents, 8000);
+setInterval(loadBoard, 300000);   // matches the server's 5-min cache
 fitCamera();
 tick();
 </script>

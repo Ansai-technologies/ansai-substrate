@@ -11,6 +11,7 @@ One FastAPI service (default http://localhost:8080):
   - POST /api/chat       -> group chat with @mentioned agents (async accept;
                             replies + tool results stream in via the shared log)
   - GET  /api/chat/log   -> shared chat log entries (polling; ?since=<seq>)
+  - GET  /api/blackboard -> tail of council/log.md (ansai-core, via GitHub)
   - GET  /api/approvals/pending -> HITL approval cards for gated tool calls
   - POST /api/approvals/{id}/approve|deny
 
@@ -33,10 +34,17 @@ Each chat turn gets the last 30 log entries as "recent office chat", so every
 agent reads what everyone said before it. The founder sees the same log the
 agents see.
 
+Sentinel is the house watchman, NOT a council seat (no vote): a seventh chat
+participant whose replies come from a direct Meta API call (see
+_sentinel_reply) — text only, NO tools, NO Hermes session, never the
+worker profile the six seats get.
+
 Chat contract:
   POST /api/chat {targets: ["tangaza", ...], message: "..."}
-    - targets: 0..6 roster ids; "everyone" expands to all six, order preserved,
-      deduped. No @mention in the UI -> targets: ["jabari"] (chair speaks).
+    - targets: 0..7 chat-participant ids (six seats + sentinel); "everyone"
+      expands to the six council seats only (Sentinel is not a seat and is
+      never swept in), order preserved, deduped. No @mention in the UI ->
+      targets: ["jabari"] (chair speaks).
     - Backward compat: {agent: "<id>", message} maps to {targets: ["<id>"]}.
   -> {ok: true, accepted: [...], seq: <human msg seq>} immediately.
      Replies arrive later via GET /api/chat/log?since=<seq>.
@@ -45,12 +53,14 @@ Run:  uvicorn office.server:app --host 127.0.0.1 --port 8080   (from repo root)
 """
 
 import asyncio
+import base64
 import importlib.util
 import json
 import os
 import sys
 import threading
 import time
+import urllib.request
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
@@ -126,7 +136,20 @@ AGENTS = {
         "role": "Labs scout",
         "color": "#7c3aed",
     },
+    # Sentinel: house watchman, NOT a council seat, no vote. Listed here so
+    # it can be @mentioned in chat and seen on the floor; handled separately
+    # in _run_chat_agent (direct Meta call, no tools — see _sentinel_reply).
+    "sentinel": {
+        "id": "sentinel",
+        "name": "Sentinel",
+        "role": "House watchman (not a seat)",
+        "color": "#374151",
+    },
 }
+
+# The six council seats (Baraza). @everyone means these six only — Sentinel
+# is a chat participant, not a seat, and is never swept into @everyone.
+COUNCIL_IDS = ["tangaza", "fundi", "jabari", "sanaa", "akiba", "dadisi"]
 
 # Shared rules for every chat turn: read the room first, answer directly when
 # it's just talk, use tools when asked to do something, and never claim an
@@ -142,6 +165,17 @@ _CHAT_RULES = (
     "Read-only tools run freely. Writes, deletes, shell commands, and sends pop "
     "an approval card in the chat — briefly say what you want to do and wait for "
     "his decision; never claim you did something you didn't."
+)
+
+# Sentinel's system prompt. Kept out of WORKER_CHAT_INSTRUCTIONS on purpose:
+# Sentinel must never receive the worker tool profile.
+SENTINEL_INSTRUCTIONS = (
+    "You are Sentinel, house watchman for Ansai Technologies "
+    "(founder: Melchizedek, Nairobi). House watchman (not a seat) — not a "
+    "council seat, no vote. Facts carry dates; UNSURE is a valid state; "
+    "never record a proposal as delivered work. Decisions, sends, merges "
+    "and money belong to Melchizedek alone. Answer directly and briefly, "
+    "plain text. You have no tools in this chat — describe, don't do."
 )
 
 WORKER_CHAT_INSTRUCTIONS = {
@@ -199,7 +233,7 @@ def _load_chat_log() -> None:
     global _chat_seq
     if not os.path.exists(CHAT_LOG_PATH):
         return
-    with open(CHAT_LOG_PATH) as f:
+    with open(CHAT_LOG_PATH, encoding="utf-8", errors="replace") as f:  # legacy log has cp1252 bytes
         for line in f:
             line = line.strip()
             if not line:
@@ -217,6 +251,55 @@ def _load_chat_log() -> None:
 
 
 _load_chat_log()
+
+
+def _hermes_env(key: str) -> str:
+    """Env var, falling back to ~/.hermes/.env. Value is never logged."""
+    val = os.environ.get(key, "")
+    if val:
+        return val
+    env_file = os.path.expanduser("~/.hermes/.env")
+    try:
+        for line in open(env_file, encoding="utf-8", errors="ignore"):
+            if line.strip().startswith(key + "="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _sentinel_reply(message: str, recent: list) -> str:
+    """Sentinel chat reply: direct Meta API call. Text only, NO tools,
+    NO Hermes session. Recent shared-log entries become the conversation
+    (founder -> user, Sentinel -> assistant, seats -> named user turns)."""
+    key = _hermes_env("META_API_KEY") or _hermes_env("MODEL_API_KEY")
+    if not key:
+        raise RuntimeError("no META_API_KEY / MODEL_API_KEY available for Sentinel")
+    msgs = [{"role": "system", "content": SENTINEL_INSTRUCTIONS}]
+    for e in recent:
+        author = e.get("author", "")
+        text = str(e.get("text", ""))
+        if author == "human":
+            msgs.append({"role": "user", "content": text})
+        elif author == "sentinel":
+            msgs.append({"role": "assistant", "content": text})
+        elif author in AGENTS:
+            msgs.append({"role": "user", "content": f"{AGENTS[author]['name']}: {text}"})
+        # system notes are office noise for Sentinel; skip them
+    if not (msgs[-1]["role"] == "user" and msgs[-1]["content"] == message):
+        msgs.append({"role": "user", "content": message})
+    req = urllib.request.Request(
+        "https://api.meta.ai/v1/chat/completions",
+        data=json.dumps(
+            {"model": "muse-wonder-1.0", "messages": msgs, "max_tokens": 800}
+        ).encode(),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=90) as resp:
+        data = json.load(resp)
+    return (data["choices"][0]["message"]["content"] or "").strip()
+
 
 # Live state, derived from the event stream. States: idle | working |
 # thinking | error. Unknown agent ids are tracked too (spare desk).
@@ -357,7 +440,7 @@ def list_agents():
 
 
 class ChatIn(BaseModel):
-    targets: list[str] = Field(default_factory=list, min_length=0, max_length=6)
+    targets: list[str] = Field(default_factory=list, min_length=0, max_length=7)
     agent: str | None = None  # legacy single-target field; maps to targets
     message: str = Field(min_length=1, max_length=500)
 
@@ -365,10 +448,12 @@ class ChatIn(BaseModel):
 def _run_chat_agent(agent_id: str, message: str) -> None:
     """One chat turn for one agent, on a daemon thread.
 
-    The agent gets the worker tool profile (read tools free, writes/shell/
+    Council seats get the worker tool profile (read tools free, writes/shell/
     sends gated by the approval queue) plus the last 30 shared-log entries,
-    so it reads what everyone said before replying. The reply lands in the
-    shared log; the UI polls for it.
+    so each reads what everyone said before replying. Sentinel (house
+    watchman, not a seat) is the exception: _sentinel_reply answers via a
+    direct Meta API call — text only, no tools, no Hermes session. The
+    reply lands in the shared log; the UI polls for it.
     """
     name = AGENTS[agent_id]["name"]
     prev_name = os.environ.get("AGENT_NAME")
@@ -390,16 +475,21 @@ def _run_chat_agent(agent_id: str, message: str) -> None:
                 who = str(author)  # system and anything else, labeled as-is
             lines.append(f"{who}: {e.get('text', '')}")
         history = "\n".join(lines) or "(no prior messages)"
-        prompt = (
-            "Recent office chat (you can see what everyone said):\n"
-            + history
-            + f"\n\nMelchizedek just wrote: {message}\nReply as {name}."
-        )
-        agent = build_mini_agent(
-            agent_id, WORKER_CHAT_INSTRUCTIONS[agent_id], tools=get_tools("worker")
-        )
-        response = agent.run(prompt)
-        reply = (response.content or "").strip()[:2000] or "(no reply)"
+        if agent_id == "sentinel":
+            # House watchman (not a seat): direct Meta call, text only.
+            # Never build_mini_agent / get_tools("worker") for Sentinel.
+            reply = _sentinel_reply(message, recent)[:2000] or "(no reply)"
+        else:
+            prompt = (
+                "Recent office chat (you can see what everyone said):\n"
+                + history
+                + f"\n\nMelchizedek just wrote: {message}\nReply as {name}."
+            )
+            agent = build_mini_agent(
+                agent_id, WORKER_CHAT_INSTRUCTIONS[agent_id], tools=get_tools("worker")
+            )
+            response = agent.run(prompt)
+            reply = (response.content or "").strip()[:2000] or "(no reply)"
         _log(agent_id, reply)
         event_bus.emit("chat_message", agent_id, f"out: {reply[:100]}")
     except Exception as exc:
@@ -420,7 +510,9 @@ async def chat(body: ChatIn):
     if not targets:
         targets = ["jabari"]  # no @mention: the chair speaks for the room
     if any(str(t).lower() == "everyone" for t in targets):
-        targets = list(AGENTS.keys())  # @everyone: the whole Baraza
+        # @everyone: the six council seats only. Sentinel (house watchman,
+        # not a seat) is only spoken to when @mentioned directly.
+        targets = list(COUNCIL_IDS)
     # Dedupe, keep order.
     seen = set()
     deduped = []
@@ -435,12 +527,16 @@ async def chat(body: ChatIn):
             {"ok": False, "error": f"unknown agent(s): {', '.join(unknown)}"},
             status_code=422,
         )
-    if len(targets) > 6:
+    if len(targets) > 7:
         return JSONResponse(
             {"ok": False, "error": "too many targets"},
             status_code=422,
         )
 
+    blocked = [x for x in targets if x in _disabled]
+    if blocked:
+        names = ", ".join(AGENTS[x]["name"] for x in blocked)
+        return JSONResponse({"ok": False, "error": f"disabled by founder: {names}"}, status_code=422)
     msg = body.message.strip()
     entry = _log("human", msg)
     # Async accept: one daemon thread per target; replies stream into the
@@ -458,6 +554,58 @@ def chat_log(since: int = 0):
     with _chat_lock:
         entries = [e for e in CHAT_LOG if e.get("seq", 0) > since]
     return {"entries": entries}
+
+
+# --- Council blackboard (read-only) ---
+_board_cache: dict = {"ts": 0.0, "data": None}
+
+
+@app.get("/api/blackboard")
+def blackboard():
+    """Tail of council/log.md from Ansai-technologies/ansai-core (cached 5 min).
+
+    Sliced from the last '## Baraza daily cycle' header. Read-only: this
+    endpoint never writes to GitHub. Token is never logged or returned.
+    """
+    if _board_cache["data"] and time.time() - _board_cache["ts"] < 300:
+        return _board_cache["data"]
+    # Token candidates, Hermes file first: gateway/.env's GITHUB_TOKEN is a
+    # fine-grained PAT scoped to ansai-substrate and 404s on ansai-core, so
+    # an env-first lookup would shadow the token that can read the board.
+    candidates = []
+    env_file = os.path.expanduser("~/.hermes/.env")
+    try:
+        for line in open(env_file, encoding="utf-8", errors="ignore"):
+            if line.strip().startswith("GITHUB_TOKEN="):
+                candidates.append(line.split("=", 1)[1].strip())
+    except OSError:
+        pass
+    if os.environ.get("GITHUB_TOKEN"):
+        candidates.append(os.environ["GITHUB_TOKEN"])
+    candidates = [c for i, c in enumerate(candidates) if c and c not in candidates[:i]]
+    if not candidates:
+        return JSONResponse({"ok": False, "error": "no GITHUB_TOKEN"}, status_code=503)
+    doc = None
+    last_exc: Exception | None = None
+    for token in candidates:
+        req = urllib.request.Request(
+            "https://api.github.com/repos/Ansai-technologies/ansai-core/contents/council/log.md",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json", "User-Agent": "ansai-office"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                doc = json.load(resp)
+            break
+        except Exception as exc:  # 404/401 from a repo-scoped token: try next
+            last_exc = exc
+    if doc is None:
+        return JSONResponse({"ok": False, "error": f"blackboard fetch failed: {type(last_exc).__name__}"}, status_code=502)
+    text = base64.b64decode(doc["content"]).decode("utf-8", errors="replace")
+    marker = text.rfind("## Baraza daily cycle")
+    tail = text[marker:] if marker >= 0 else text[-6000:]
+    data = {"ok": True, "sha": doc.get("sha", "")[:10], "cycle": tail.splitlines()[0] if tail else "", "tail": tail[-6000:]}
+    _board_cache.update(ts=time.time(), data=data)
+    return data
 
 
 @app.get("/api/approvals/pending")
@@ -480,6 +628,82 @@ def approvals_deny(approval_id: str):
     return JSONResponse({"ok": False, "error": "no such approval"}, status_code=404)
 
 
+# --- Ansai Platform (modern agent console, /platform) ---
+# Model routing, as the founder sees it. Council seats talk to the LiteLLM
+# gateway by GROUP (never a provider); Sentinel goes direct to Meta.
+MODEL_ROUTES = {
+    "jabari": {"group": "thinker", "label": "gateway · thinker"},
+    "tangaza": {"group": "workhorse", "label": "gateway · workhorse"},
+    "fundi": {"group": "workhorse", "label": "gateway · workhorse"},
+    "sanaa": {"group": "workhorse", "label": "gateway · workhorse"},
+    "akiba": {"group": "workhorse", "label": "gateway · workhorse"},
+    "dadisi": {"group": "workhorse", "label": "gateway · workhorse"},
+    "sentinel": {"group": "muse-wonder-1.0", "label": "Meta direct · muse-wonder-1.0 · no tools"},
+}
+_disabled: set = set()  # founder-managed from /platform; memory-only
+
+
+@app.get("/platform")
+def platform_page():
+    return FileResponse(os.path.join(STATIC_DIR, "platform.html"), media_type="text/html")
+
+
+@app.get("/api/platform/agents")
+def platform_agents():
+    out = []
+    for aid, meta in AGENTS.items():
+        st = _agent_state(aid)
+        out.append({**st, "enabled": aid not in _disabled,
+                    "seat": aid in COUNCIL_IDS,
+                    "route": MODEL_ROUTES.get(aid, {"group": "?", "label": "?"})})
+    return out
+
+
+class EnabledIn(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/agents/{agent_id}/enabled")
+def set_enabled(agent_id: str, body: EnabledIn):
+    if agent_id not in AGENTS:
+        return JSONResponse({"ok": False, "error": "unknown agent"}, status_code=404)
+    (_disabled.discard if body.enabled else _disabled.add)(agent_id)
+    _log("system", f"{AGENTS[agent_id]['name']} {'enabled' if body.enabled else 'disabled'} by founder.")
+    return {"ok": True, "agent": agent_id, "enabled": body.enabled}
+
+
+class OrchestrateIn(BaseModel):
+    topic: str = Field(min_length=1, max_length=500)
+    participants: list[str] = Field(default_factory=list, max_length=7)
+
+
+def _orchestrate(topic: str, participants: list) -> None:
+    """One council session: seats speak IN ORDER, each reading the shared
+    log (which by then holds the previous seats' replies), then the chair
+    synthesises. This is agent-to-agent talk, not parallel replies."""
+    _log("system", f"Council session convened: {topic}")
+    for aid in participants:
+        _run_chat_agent(aid, topic)
+    if "jabari" not in participants:
+        _run_chat_agent("jabari", f"Synthesise this council session on: {topic} "
+                        "Give: decisions, open questions, and what is Melchizedek's hand alone.")
+    _log("system", "Council session complete.")
+
+
+@app.post("/api/orchestrate")
+def orchestrate(body: OrchestrateIn):
+    parts = [p for p in dict.fromkeys(body.participants) if p in COUNCIL_IDS and p not in _disabled]
+    if not parts:
+        parts = [c for c in COUNCIL_IDS if c not in _disabled]
+    if not parts:
+        return JSONResponse({"ok": False, "error": "all seats disabled"}, status_code=422)
+    entry = _log("human", f"Convene the council: {body.topic.strip()}")
+    threading.Thread(target=_orchestrate, args=(body.topic.strip(), parts), daemon=True).start()
+    return {"ok": True, "accepted": parts, "seq": entry["seq"]}
+
+
 @app.get("/api/health")
 def health():
+    for aid in AGENTS:
+        _agent_state(aid)
     return {"ok": True, "ts": _now(), "agents": len(_state)}
