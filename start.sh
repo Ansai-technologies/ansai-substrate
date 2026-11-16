@@ -46,8 +46,9 @@ if [ ! -f gateway/.env ]; then
   cp gateway/.env.example gateway/.env
   echo "created gateway/.env from the example."
 fi
-# normalize BOM and CRLF (e.g. .env written by PowerShell) before sourcing
-"$PY" -c 'from pathlib import Path; p=Path("gateway/.env"); data=p.read_bytes(); data=data[3:] if data.startswith(b"\xef\xbb\xbf") else data; p.write_bytes(data.replace(b"\r\n", b"\n"))'
+# normalize BOM + CRLF (e.g. .env written by PowerShell 5.1, whose -Encoding
+# utf8 emits a BOM that breaks `source` under set -e) so sourced values are clean
+sed -i.bak -e '1s/^\xef\xbb\xbf//' -e 's/\r$//' gateway/.env && rm -f gateway/.env.bak
 # shellcheck disable=SC1091
 set -a; source gateway/.env; set +a
 if [ -z "${DEEPSEEK_API_KEY:-}" ] || [ -z "${GEMINI_API_KEY:-}" ]; then

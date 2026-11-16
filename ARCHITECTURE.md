@@ -89,3 +89,19 @@ but burn-tracking is critical path, not an afterthought:
 
 No invented pricing anywhere here: the only numbers that matter are the ones
 the gateway logs. See COSTS.md.
+
+---
+
+## Update — 2026-10-25: ratified stack, identity/policy, sovereignty
+
+Ratified by the founder after a full tooling review (notes in the factory research file):
+
+- **Frameworks:** Agno primary; LangGraph as the escape hatch for stateful, approval-gated graph workflows.
+- **Tool layer:** MCP won. Tools are built once as MCP servers; frameworks are interchangeable above them. The catalogue (`catalogue/`) is the registry of record.
+- **Observability:** Langfuse, self-hosted — traces stay on our ground.
+- **Promotion gates:** Promptfoo + DeepEval run in CI; an agent version promotes only when both pass, and the eval record itself is attested.
+- **Identity & policy:** SPIFFE/SPIRE workload identity (short-lived, attested), OPA policy-as-code enforced at the tool-call boundary, RFC 8693 token exchange so a token names both the agent and the principal it acts for.
+- **Wallets:** an agentic wallet is a policy object (see `templates/wallet.template.json`): the organisation owns it, the agent operates it under caps, allowlists, approvals and expiry, and movement is proven by rail callbacks (Daraja for M-Pesa) — never by agent self-report.
+- **Sovereignty — never on foreign cloud:** master keys and the secrets vault; Attest's signing core and audit archive; institutional clients' raw records; gateway logs; the factory's own records.
+- **Status honesty:** the gateway in this repo is configuration, not yet a running service on our own ground (DC-01 walkthrough outstanding). No agent has yet been born from the v0.1 template; the bursar spec is the first candidate.
+
