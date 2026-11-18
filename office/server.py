@@ -15,6 +15,11 @@ One FastAPI service (default http://localhost:8080):
   - GET  /api/approvals/pending -> HITL approval cards for gated tool calls
   - POST /api/approvals/{id}/approve|deny
 
+Access:    every route except GET /api/health and POST /events/ingest
+           requires a live Ansai ID session (the gate below the app
+           definition). The tunnel may stay up because the server itself
+           now checks who is asking.
+
 Event flow:  agents -> agents/events.py -> POST /events/ingest -> SSE -> 3D scene.
 Chat path:   browser -> POST /api/chat {targets, message} -> 202-style accept
              -> one daemon thread per target runs _run_chat_agent ->
@@ -64,7 +69,7 @@ import urllib.request
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -360,6 +365,74 @@ app = FastAPI(title="Ansai Office")
 # Vendored assets: portraits + three.js. index.html loads everything
 # relative, so the office works the moment start.sh runs, even offline.
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# --- Ansai ID gate -----------------------------------------------------------
+# The floor is private. Every route except /api/health and /events/ingest
+# requires a live Ansai ID session: the browser carries the
+# ansai_id_session cookie (Domain=.ansaitechnologies.co.ke) from signing in
+# at id.ansaitechnologies.co.ke, and the gate forwards ONLY that cookie to
+# the ID service's /session endpoint - the same contract as the estate's
+# other Ansai ID cutovers (Board, Studio, Store). Any doubt (no cookie,
+# non-200, timeout, bad JSON) fails closed: pages redirect to the Ansai ID
+# sign-in, API calls get a 401. Verdicts are cached briefly (60s for a
+# person, 10s for a rejection) so the floor does not hammer the ID service.
+# /events/ingest stays open on purpose: out-of-process emitters on this
+# machine (agents/events.py) hold no browser cookie, and ingest accepts
+# display events only - it runs no tools and moves no money.
+# OFFICE_ID_GATE=off disables the gate for local development only; never
+# run the tunnel with it off.
+ID_BASE = os.environ.get("ANSAI_ID_URL", "https://id.ansaitechnologies.co.ke")
+_ID_PUBLIC_PATHS = {"/api/health", "/events/ingest"}
+_id_cache: dict = {}
+_id_cache_lock = threading.Lock()
+
+
+def _id_person(token: str):
+    """Return the Ansai ID person for a session token, or None."""
+    if not token:
+        return None
+    now = time.time()
+    with _id_cache_lock:
+        hit = _id_cache.get(token)
+        if hit and hit[1] > now:
+            return hit[0]
+    person = None
+    try:
+        req = urllib.request.Request(
+            ID_BASE + "/session",
+            headers={"Cookie": "ansai_id_session=" + token},
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode("utf-8"))
+                person = data.get("person") or None
+    except Exception:
+        person = None
+    with _id_cache_lock:
+        _id_cache[token] = (person, now + (60 if person else 10))
+    return person
+
+
+@app.middleware("http")
+async def ansai_id_gate(request, call_next):
+    if os.environ.get("OFFICE_ID_GATE", "on").lower() == "off":
+        return await call_next(request)
+    if request.url.path in _ID_PUBLIC_PATHS:
+        return await call_next(request)
+    person = await asyncio.to_thread(
+        _id_person, request.cookies.get("ansai_id_session", "")
+    )
+    if person:
+        return await call_next(request)
+    if request.url.path.startswith("/api/") or request.url.path == "/events":
+        return JSONResponse(
+            {"ok": False, "error": "ansai_id_required"}, status_code=401
+        )
+    return RedirectResponse(ID_BASE + "/home.html", status_code=302)
+
+
+# --- end Ansai ID gate -------------------------------------------------------
+
 
 # SSE fan-out. Hand-rolled on asyncio.Queue — no extra dependency.
 _subscribers: set = set()
