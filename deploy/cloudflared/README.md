@@ -6,7 +6,7 @@ Public URL: https://agents.ansaitechnologies.co.ke
 
 ## Architecture
 
-  browser -> Cloudflare Access (founder email only, one-time PIN)
+  browser -> Ansai ID sign-in (enforced in office/server.py itself)
           -> Cloudflare Tunnel "ansai-agents" (6b405f1f-51f9-40af-b034-daf1a04c0a68)
           -> cloudflared on the Lenovo (WSL2)
           -> FastAPI office server, localhost:8080 (office/server.py)
@@ -19,13 +19,22 @@ gateway are up.
 
 ## Security (non-negotiable)
 
-office/server.py has no auth of its own and chat EXECUTES: council
-seats get the worker tool profile (reads free; writes/shell/sends
-gated by in-UI approval cards). Never run the tunnel without the
-Cloudflare Access application in front of
-agents.ansaitechnologies.co.ke allowing only the founder's email.
-If Access is not enabled on the Cloudflare account, keep the tunnel
-stopped.
+office/server.py enforces Ansai ID sign-in itself (the gate below
+the app definition): every route except /api/health and
+/events/ingest requires a live ansai_id_session, verified against
+id.ansaitechnologies.co.ke/session, failing closed. Chat EXECUTES -
+council seats get the worker tool profile (reads free; writes/shell/
+sends gated by in-UI approval cards) - so the gate is what makes it
+safe to leave the tunnel up. Never run the tunnel with
+OFFICE_ID_GATE=off. A Cloudflare Access application in front of the
+hostname remains welcome as a second layer, but it is no longer the
+only lock.
+
+Known open edge: POST /events/ingest accepts display events without
+a session, because emitters on this machine hold no browser cookie.
+It runs no tools and moves no money; the worst case is a forged
+event on the 3D floor. Harden it before ingest ever carries more
+than display data.
 
 Never commit tunnel credentials: ~/.cloudflared/<tunnel-id>.json and
 ~/.cloudflared/cert.pem stay on the machine only. config.yml in this
