@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your agents — Ansai Technologies</title>
+<script>
+/* Set the theme before first paint: saved choice, else the device's, else light. */
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("ansai-theme"); } catch (e) { t = null; }
+  if (t !== "light" && t !== "dark") {
+    t = (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  }
+  document.documentElement.setAttribute("data-theme", t);
+})();
+</script>
+<style>
+/* Ansai Palette v2 (ansaitechnologies.co.ke / Makao UI kit) — same tokens as the desk */
+:root, [data-theme="light"]{
+  --bg:#F5F8FC; --panel:#FFFFFF; --panel2:#FFFFFF; --line:#D9E4F0;
+  --tx:#0D1B2A; --mut:#4A5F75; --faint:#627791; --gold:#7A5A00; --gold-strong:#F2C14E;
+  --acc:#2563EB; --acc-strong:#2563EB; --grn:#059669; --red:#dc2626;
+  --chip:rgba(37,99,235,.08); --shadow:0 12px 32px rgba(13,27,42,.10);
+}
+[data-theme="dark"]{
+  --bg:#05070D; --panel:#0B1220; --panel2:#0B1424; --line:rgba(169,188,210,.14);
+  --tx:#E8EEF5; --mut:#A9BCD2; --faint:#7E97B1; --gold:#FFD97A; --gold-strong:#F2C14E;
+  --acc:#38BDF8; --acc-strong:#2563EB; --grn:#34D399; --red:#f87171;
+  --chip:rgba(56,189,248,.10); --shadow:0 12px 40px rgba(0,0,0,.45);
+}
+*{box-sizing:border-box;font-family:Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.mono{font-family:ui-monospace,"JetBrains Mono",Menlo,monospace}
+body{margin:0;background:var(--bg);color:var(--tx);transition:background .2s,color .2s;line-height:1.55}
+a{color:var(--acc);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:720px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:14px}
+.eyebrow{font-size:10.5px;letter-spacing:.22em;color:var(--gold);font-weight:600}
+h1{font-size:26px;font-weight:800;letter-spacing:-.03em;margin:4px 0 2px}
+.sub{font-size:13.5px;color:var(--mut);margin:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.card h2{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--faint);font-weight:700;margin:0 0 12px}
+.chip{border:1px solid var(--line);background:transparent;color:var(--mut);border-radius:999px;padding:5px 11px;font-size:12px;font-weight:500;cursor:pointer}
+.chip:hover{color:var(--tx);border-color:var(--acc)}
+.btn{display:inline-block;background:var(--acc-strong);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-weight:600;font-size:13.5px;cursor:pointer}
+.btn:hover{filter:brightness(1.12);text-decoration:none}
+.statepill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:6px 12px;font-size:13px;font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex-shrink:0}
+.dot.trial{background:var(--gold-strong)} .dot.active{background:var(--grn)}
+.dot.paused,.dot.trial_ended{background:var(--red)} .dot.setting_up{background:var(--acc)}
+.mut{color:var(--mut)} .small{font-size:12.5px}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+.topbar{display:flex;align-items:flex-start;gap:10px}
+.topbar .chip{margin-left:auto;flex-shrink:0}
+#agents{display:flex;flex-direction:column;gap:14px}
+#agents[hidden]{display:none}
+.agent{display:block;color:var(--tx)}
+.agent:hover{text-decoration:none;border-color:var(--acc)}
+.agent .kind{font-size:19px;font-weight:800;letter-spacing:-.02em}
+.agent .biz{font-size:14.5px;color:var(--mut);margin-top:2px}
+.agent .open{font-size:13px;font-weight:600;color:var(--acc);margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="topbar">
+    <div>
+      <div class="eyebrow mono">ANSAI TECHNOLOGIES</div>
+      <h1>Your agents</h1>
+      <p class="sub">Every agent you have leased, in one place. Open one to see its desk — its limits, its record, its statements.</p>
+    </div>
+    <button class="chip" id="themebtn" type="button">Theme</button>
+  </header>
+
+  <section class="card" id="loading">
+    <p class="pulse" style="margin:0;font-size:14.5px">Loading your agents…</p>
+  </section>
+
+  <section class="card" id="empty" hidden>
+    <h2>No agents yet</h2>
+    <p style="margin:0 0 14px;font-size:14.5px">You haven't leased an agent yet. When you do — a bookkeeper, a shop agent, a bursar and more — it will live here, and you will open its desk from this page.</p>
+    <a class="btn" href="https://store.ansaitechnologies.co.ke" target="_blank" rel="noopener">Add another agent</a>
+  </section>
+
+  <section class="card" id="errorbox" hidden>
+    <h2>Something went wrong</h2>
+    <p id="errormsg" style="margin:0 0 12px;font-size:14.5px">We couldn't load your agents just now.</p>
+    <button class="btn" id="retry" type="button">Try again</button>
+  </section>
+
+  <main id="agents" hidden></main>
+
+  <section class="card" id="addcard" hidden>
+    <h2>Need another pair of hands?</h2>
+    <p class="mut" style="margin:0 0 14px;font-size:14.5px">Lease another agent from the shelf — it joins this page alongside the ones you already have.</p>
+    <a class="btn" href="https://store.ansaitechnologies.co.ke" target="_blank" rel="noopener">Add another agent</a>
+  </section>
+
+  <noscript><section class="card"><p style="margin:0">This page needs JavaScript to load your agents.</p></section></noscript>
+</div>
+
+<script>
+"use strict";
+var STORE = "https://store.ansaitechnologies.co.ke";
+
+function h(tag, cls, text) {
+  var el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text != null) el.textContent = text;
+  return el;
+}
+function fmtDate(iso) {
+  if (!iso) return "";
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+}
+function show(id) {
+  ["loading", "empty", "errorbox", "agents"].forEach(function (x) {
+    var el = document.getElementById(x);
+    if (el) el.hidden = (x !== id);
+  });
+  document.getElementById("addcard").hidden = (id !== "agents");
+}
+
+var themebtn = document.getElementById("themebtn");
+function syncThemeBtn() {
+  themebtn.textContent = document.documentElement.getAttribute("data-theme") === "dark" ? "Light" : "Dark";
+}
+themebtn.addEventListener("click", function () {
+  var next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("ansai-theme", next); } catch (e) { /* private mode */ }
+  syncThemeBtn();
+});
+syncThemeBtn();
+
+function agentCard(a) {
+  var card = h("a", "card agent");
+  card.href = a.deskUrl || ("/lease/" + encodeURIComponent(a.id || ""));
+  card.appendChild(h("div", "kind", a.kind || "Your agent"));
+  if (a.businessName) card.appendChild(h("div", "biz", a.businessName));
+  else if (a.agentName) card.appendChild(h("div", "biz mono small", a.agentName));
+  var pill = h("span", "statepill");
+  var dot = h("span", "dot " + ((a.state && a.state.code) || ""));
+  pill.appendChild(dot);
+  var label = (a.state && a.state.label) || "In progress";
+  var detail = (a.state && a.state.detail) || "";
+  pill.appendChild(h("span", null, label + (detail ? " — " + detail : "")));
+  var prow = h("p", null);
+  prow.style.margin = "14px 0 0";
+  prow.appendChild(pill);
+  card.appendChild(prow);
+  if (a.state && a.state.code === "trial" && a.trialEndsAt) {
+    card.appendChild(h("p", "small mut", "Your free week ends on " + fmtDate(a.trialEndsAt) + "."));
+  }
+  card.appendChild(h("div", "open", "Open its desk →"));
+  return card;
+}
+
+function render(data) {
+  var list = (data && data.agents) || [];
+  if (!list.length) { show("empty"); return; }
+  var box = document.getElementById("agents");
+  box.textContent = "";
+  list.forEach(function (a) { box.appendChild(agentCard(a)); });
+  show("agents");
+}
+
+function load() {
+  show("loading");
+  fetch("/api/home", { headers: { "Accept": "application/json" } })
+    .then(function (res) {
+      if (!res.ok) {
+        return res.json().catch(function () { return null; }).then(function (body) {
+          if (body && body.message) document.getElementById("errormsg").textContent = body.message;
+          show("errorbox");
+          return null;
+        });
+      }
+      return res.json();
+    })
+    .then(function (data) { if (data) render(data); })
+    .catch(function () {
+      document.getElementById("errormsg").textContent = "We couldn't reach the platform just now. Check your connection and try again.";
+      show("errorbox");
+    });
+}
+document.getElementById("retry").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>

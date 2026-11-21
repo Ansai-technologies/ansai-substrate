@@ -67,6 +67,7 @@ ul.plain{margin:0;padding-left:20px;font-size:14.5px;display:flex;flex-direction
 </head>
 <body>
 <div class="wrap">
+  <p class="small" style="margin:0"><a href="/home">&larr; All your agents</a></p>
   <header class="topbar">
     <div>
       <div class="eyebrow mono">ANSAI TECHNOLOGIES</div>
@@ -101,11 +102,6 @@ ul.plain{margin:0;padding-left:20px;font-size:14.5px;display:flex;flex-direction
       <p id="purpose" class="mut" style="margin:8px 0 0;font-size:14.5px"></p>
       <p style="margin:14px 0 0"><span class="statepill"><span class="dot" id="statedot"></span><span id="statetext"></span></span></p>
       <p id="stateextra" class="small mut" style="margin:10px 0 0"></p>
-    </section>
-
-    <section class="card" id="platformcard">
-      <h2>On the platform</h2>
-      <div class="rows" id="platformbody"></div>
     </section>
 
     <section class="card" id="walletcard">
@@ -169,38 +165,6 @@ themebtn.addEventListener("click", function () {
   syncThemeBtn();
 });
 syncThemeBtn();
-
-function renderPlatform(inst, d) {
-  var box = document.getElementById("platformbody");
-  box.textContent = "";
-  if (!inst) {
-    box.appendChild(h("p", null, "This agent seats itself here when the lease activates — that has not happened yet."));
-    return;
-  }
-  if (inst.status !== "seated") {
-    box.appendChild(h("p", null, "This agent's time at its desk has ended — it has been " + inst.status + ", and the statements on this page are its record."));
-    return;
-  }
-  box.appendChild(h("p", null, (inst.agent_name || d.kind) + " is seated at its desk on the platform, built from the setup you completed in the Store."));
-  var w = (inst.spec && inst.spec.wallet) || {};
-  var bits = [];
-  if (w.perTxnCapKes != null) bits.push("at most " + kes(w.perTxnCapKes) + " in a single payment");
-  if (w.dailyCap != null && w.dailyCapUnit === "KES/day") bits.push("at most " + kes(w.dailyCap) + " a day");
-  if (w.approvalThresholdKes != null) {
-    bits.push(Number(w.approvalThresholdKes) === 0
-      ? "every payment waits for your approval first"
-      : "anything above " + kes(w.approvalThresholdKes) + " waits for your approval");
-  }
-  if (bits.length) box.appendChild(h("p", null, "Its wallet is apportioned: " + bits.join("; ") + "."));
-  var g = (inst.spec && inst.spec.guardrails) || {};
-  if ((g.may && g.may.length) || (g.mustApprove && g.mustApprove.length) || (g.never && g.never.length)) {
-    box.appendChild(h("p", null, "The guardrails on this page are in force at its desk."));
-  }
-  var meta = "Setup version " + String(inst.spec_hash || "").slice(0, 12);
-  var seated = fmtDate(inst.created_at);
-  if (seated) meta += " · seated " + seated;
-  box.appendChild(h("p", "small mut mono", meta));
-}
 
 function renderWallet(w) {
   var box = document.getElementById("walletrows");
@@ -281,7 +245,6 @@ function render(d) {
     extra = "Your records stay here until " + fmtDate(d.recordsUntil) + ".";
   }
   document.getElementById("stateextra").textContent = extra;
-  renderPlatform(d.instance || null, d);
   renderWallet(d.wallet || {});
   renderGuardrails(d.guardrails || {});
   var vc = document.getElementById("voicecard");

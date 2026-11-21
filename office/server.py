@@ -59,7 +59,6 @@ Run:  uvicorn office.server:app --host 127.0.0.1 --port 8080   (from repo root)
 
 import asyncio
 import base64
-import hashlib
 import importlib.util
 import json
 import os
@@ -416,6 +415,58 @@ def _id_person(token: str):
     return person
 
 
+# --- Customer-route Google admission -----------------------------------------
+# The Store now signs customers in with Google (cookie as_google). That
+# cookie is host-only on store.ansaitechnologies.co.ke today, so a browser
+# only sends it here once the Store widens its Domain — this side is ready
+# either way. On the CUSTOMER routes only (/home, /api/home, /lease/*,
+# /api/lease/*), a caller with no valid Ansai ID session may instead be
+# admitted by a verified Google session: the gate forwards ONLY the
+# as_google cookie to the Store's GET /api/session and admits solely on an
+# {authed: true, via: "google"} answer. Any doubt (no cookie, non-200,
+# timeout, bad JSON, any other via) fails closed, exactly like the ID
+# check. Verdicts are cached like the ID verdicts (60s person / 10s
+# rejection). Every other route — /, /platform, /api/platform/*, chat,
+# approvals — stays Ansai-ID-only; a Google session never opens them.
+_google_cache: dict = {}
+_google_cache_lock = threading.Lock()
+
+
+def _is_customer_path(path: str) -> bool:
+    return path in ("/home", "/api/home") or path.startswith("/lease/") or path.startswith("/api/lease/")
+
+
+def _google_person(cookie_value: str):
+    """Return the Store-verified Google person for an as_google cookie, or None."""
+    if not cookie_value:
+        return None
+    now = time.time()
+    with _google_cache_lock:
+        hit = _google_cache.get(cookie_value)
+        if hit and hit[1] > now:
+            return hit[0]
+    person = None
+    try:
+        req = urllib.request.Request(
+            STORE_BASE + "/api/session",
+            headers={"Cookie": "as_google=" + cookie_value, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=3.5) as res:
+            if res.status == 200:
+                data = json.loads(res.read().decode("utf-8"))
+                if (
+                    isinstance(data, dict)
+                    and data.get("authed") is True
+                    and data.get("via") == "google"
+                ):
+                    person = data.get("person") or {"via": "google"}
+    except Exception:
+        person = None
+    with _google_cache_lock:
+        _google_cache[cookie_value] = (person, now + (60 if person else 10))
+    return person
+
+
 @app.middleware("http")
 async def ansai_id_gate(request, call_next):
     if os.environ.get("OFFICE_ID_GATE", "on").lower() == "off":
@@ -427,6 +478,12 @@ async def ansai_id_gate(request, call_next):
     )
     if person:
         return await call_next(request)
+    if _is_customer_path(request.url.path):
+        google_person = await asyncio.to_thread(
+            _google_person, request.cookies.get("as_google", "")
+        )
+        if google_person:
+            return await call_next(request)
     if request.url.path.startswith("/api/") or request.url.path == "/events":
         return JSONResponse(
             {"ok": False, "error": "ansai_id_required"}, status_code=401
@@ -784,7 +841,7 @@ def orchestrate(body: OrchestrateIn):
 # surface served by this office; the record itself stays in the Store. The
 # browser never talks to the Store directly — /api/lease/{id} fetches the
 # record server-side, forwarding ONLY the caller's own session cookies
-# (ansai_id_session, and as_session when present), and relays a SANITISED
+# (ansai_id_session, as_session and as_google when present), and relays a SANITISED
 # projection: the fields the desk displays, nothing else. Renter PII,
 # answers, the audit trail, pricing internals and wallet snapshots never
 # cross. The Store's read is session-scoped, so a record the caller may not
@@ -835,7 +892,7 @@ class _StoreDown(Exception):
 def _store_cookie_header(request: Request) -> str:
     """Only the caller's own Store/ID session cookies cross to the Store."""
     parts = []
-    for name in ("ansai_id_session", "as_session"):
+    for name in ("ansai_id_session", "as_session", "as_google"):
         val = request.cookies.get(name, "")
         if val:
             parts.append(f"{name}={val}")
@@ -988,156 +1045,6 @@ def lease_page(record_id: str):
     return FileResponse(os.path.join(STATIC_DIR, "lease.html"), media_type="text/html")
 
 
-# --- The factory handshake: seating the agent on the platform -----------------
-# The desk above DISPLAYS the lease; this is where the platform takes the
-# record's spec and seats the agent. The Store record carries the template's
-# specifications (wallet caps, guardrails, voice) from the customer's setup.
-# When a lease is live (trial running, or converted to a paid lease), the
-# first desk read materialises an INSTANCE here: the platform's own copy of
-# the spec it seated the agent from, keyed by Store record id and persisted
-# beside the chat log (office/lease_instances.json, created on first use).
-# Later reads are idempotent — an unchanged record changes nothing; a
-# changed spec reseats the instance in place (same created_at, new
-# spec_hash + updated_at, noted in the shared log). When the record's
-# lifecycle ends, the instance mirrors it: trial ended -> "returned",
-# lease closed -> "closed". Materialisation runs ONLY after a successful
-# Store fetch + projection — a failed fetch never creates or changes an
-# instance, and the desk's error behaviour is untouched. The spec is
-# derived ONLY from the sanitised projection, so nothing crosses that the
-# desk does not already show. The agent's work loop (executing errands
-# with tools) is the next slice; this slice is the handshake only.
-LEASE_INSTANCES_PATH = os.path.join(HERE, "lease_instances.json")
-_instances: dict = {}
-_instances_lock = threading.Lock()
-
-# Projection state code -> instance status. "trial"/"active" are the live
-# lease states; the two ended states mirror the lease's end.
-_INSTANCE_LIVE = {"trial": "seated", "active": "seated"}
-_INSTANCE_ENDED = {"trial_ended": "returned", "closed": "closed"}
-
-
-def _load_instances() -> None:
-    """Restore seated instances from disk at startup."""
-    if not os.path.exists(LEASE_INSTANCES_PATH):
-        return
-    try:
-        with open(LEASE_INSTANCES_PATH, encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        return  # a corrupt store must never stop the office booting
-    if isinstance(data, dict):
-        _instances.update({k: v for k, v in data.items() if isinstance(v, dict)})
-
-
-def _save_instances() -> None:
-    """Persist the instance store (tmp + replace, so a crash mid-write
-    cannot corrupt it). Disk trouble must never break the desk."""
-    try:
-        tmp = LEASE_INSTANCES_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_instances, f, ensure_ascii=False, indent=1, sort_keys=True)
-        os.replace(tmp, LEASE_INSTANCES_PATH)
-    except Exception:
-        pass
-
-
-_load_instances()
-
-
-def _instance_spec(projection: dict) -> dict:
-    """The spec the platform seats the agent from — the projection's own
-    wallet caps, guardrails and voice summary, nothing else."""
-    wallet = projection.get("wallet") or {}
-    return {
-        "wallet": {
-            "perTxnCapKes": wallet.get("perTxnCapKes"),
-            "dailyCap": wallet.get("dailyCap"),
-            "dailyCapUnit": wallet.get("dailyCapUnit"),
-            "approvalThresholdKes": wallet.get("approvalThresholdKes"),
-            "allowedPayees": list(wallet.get("allowedPayees") or []),
-        },
-        "guardrails": projection.get("guardrails")
-        or {"may": [], "mustApprove": [], "never": []},
-        "voice": projection.get("voice"),
-    }
-
-
-def _spec_hash(spec: dict) -> str:
-    canonical = json.dumps(
-        spec, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
-def _materialise_instance(record: dict, projection: dict):
-    """Seat the agent from the record's spec, or mirror the lease's end.
-
-    Returns the instance (a copy) or None when the lease has not
-    activated and no instance exists. Idempotent per record."""
-    record_id = str(record.get("id") or "")
-    if not record_id:
-        return None
-    code = (projection.get("state") or {}).get("code", "")
-    with _instances_lock:
-        inst = _instances.get(record_id)
-        if code in _INSTANCE_LIVE:
-            spec = _instance_spec(projection)
-            digest = _spec_hash(spec)
-            now = _now()
-            name = projection.get("agentName") or record_id
-            if inst is None:
-                inst = {
-                    "record_id": record_id,
-                    "template": str(record.get("jobId") or ""),
-                    "agent_name": projection.get("agentName") or "",
-                    "status": _INSTANCE_LIVE[code],
-                    "spec": spec,
-                    "spec_hash": digest,
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                _instances[record_id] = inst
-                _save_instances()
-                _log(
-                    "system",
-                    f"Factory: {name} seated on the platform from its Store "
-                    f"lease (setup {digest[:8]}).",
-                )
-            else:
-                changed = False
-                if inst.get("spec_hash") != digest:
-                    inst["spec"] = spec
-                    inst["spec_hash"] = digest
-                    changed = True
-                if inst.get("status") != _INSTANCE_LIVE[code]:
-                    inst["status"] = _INSTANCE_LIVE[code]
-                    changed = True
-                if changed:
-                    inst["updated_at"] = now
-                    _save_instances()
-                    _log(
-                        "system",
-                        f"Factory: {name}'s setup changed in the Store — "
-                        f"reseated at setup {digest[:8]}.",
-                    )
-            return dict(inst)
-        if inst is not None and code in _INSTANCE_ENDED:
-            ended = _INSTANCE_ENDED[code]
-            if inst.get("status") != ended:
-                inst["status"] = ended
-                inst["updated_at"] = _now()
-                _save_instances()
-                name = inst.get("agent_name") or record_id
-                _log(
-                    "system",
-                    f"Factory: {name}'s lease ended — the agent has been {ended}.",
-                )
-            return dict(inst)
-        # Not live, never seated (or live lease paused mid-flight): an
-        # existing instance stands as it is; otherwise there is none.
-        return dict(inst) if inst is not None else None
-
-
 @app.get("/api/lease/{record_id}")
 def lease_record(record_id: str, request: Request):
     try:
@@ -1160,11 +1067,104 @@ def lease_record(record_id: str, request: Request):
             },
             status_code=502,
         )
-    projection = _project_lease(record)
-    # The factory handshake: a live lease seats its agent on the platform
-    # (see _materialise_instance). Only a successful fetch reaches here.
-    projection["instance"] = _materialise_instance(record, projection)
-    return projection
+    return _project_lease(record)
+
+
+def _fetch_store_records(cookie_header: str) -> list:
+    """GET the caller's Store record list. Raises _StoreDown on any failure.
+
+    The list is session-scoped by the Store (a Google caller sees only
+    their own records); a caller who may see nothing gets an empty list,
+    not an error — there is no per-record miss on this route.
+    """
+    url = STORE_BASE + "/api/provision"
+    headers = {"Accept": "application/json"}
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=_STORE_TIMEOUT) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except Exception as exc:  # timeout, DNS, HTTP error, bad JSON
+        raise _StoreDown() from exc
+    records = data.get("records") if isinstance(data, dict) else None
+    if not isinstance(records, list):
+        raise _StoreDown()
+    return [r for r in records if isinstance(r, dict)]
+
+
+def _project_home_agent(item: dict, now: datetime) -> dict:
+    """One home card, projected from a Store list item.
+
+    Only what the card shows crosses: the job's customer name, the agent's
+    name, the business name (from the setup answers when the Store carries
+    it), the plain-words lease state (the desk's own _lease_state mapping)
+    and the trial clock. The list item's renter, foundation and pricing
+    fields never do — the customer's email and payment internals stay in
+    the Store.
+    """
+    job_id = str(item.get("jobId") or "")
+    answers = item.get("answers") if isinstance(item.get("answers"), dict) else {}
+    customer = item.get("customer") if isinstance(item.get("customer"), dict) else {}
+    business = str(
+        answers.get("businessName") or answers.get("schoolName") or customer.get("name") or ""
+    )
+    state = _lease_state({"status": item.get("status"), "trial": {}}, now)
+    ends = _parse_iso(item.get("trialEndsAt"))
+    days_left = None
+    if state["code"] == "trial" and ends:
+        secs = (ends - now).total_seconds()
+        days_left = 0 if secs <= 0 else int(secs // 86400) + (1 if secs % 86400 else 0)
+        state = dict(state)
+        state["detail"] = (
+            "your free week ends today"
+            if days_left == 0
+            else f"{days_left} day{'s' if days_left != 1 else ''} left of your free week"
+        )
+    record_id = str(item.get("id") or "")
+    return {
+        "id": record_id,
+        "kind": JOB_KIND_NAMES.get(job_id)
+        or (job_id.replace("-", " ").title() if job_id else "Your agent"),
+        "agentName": str(item.get("agentName") or ""),
+        "businessName": business,
+        "state": state,
+        "trialEndsAt": item.get("trialEndsAt"),
+        "trialDaysLeft": days_left,
+        "createdAt": item.get("createdAt"),
+        "deskUrl": "/lease/" + urllib.parse.quote(record_id, safe=""),
+    }
+
+
+# --- Customer platform home (/home) -------------------------------------------
+# The founder's ruling (Store spec SS9): a customer who leases an agent
+# lands on a platform HOME where all their agents live together — not on
+# one lone desk. /home renders the cards; /api/home fetches the caller's
+# Store record list server-side (same proxy pattern as the desk) and
+# relays only the card projection above. "Add another agent" is the page's
+# own link back to the Store shelf, in a new tab.
+
+
+@app.get("/home")
+def home_page():
+    return FileResponse(os.path.join(STATIC_DIR, "home.html"), media_type="text/html")
+
+
+@app.get("/api/home")
+def home_agents(request: Request):
+    try:
+        items = _fetch_store_records(_store_cookie_header(request))
+    except _StoreDown:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "store_unreachable",
+                "message": "We couldn't reach the Agent Store just now. Please try again in a moment.",
+            },
+            status_code=502,
+        )
+    now = datetime.now(timezone.utc)
+    return {"ok": True, "agents": [_project_home_agent(item, now) for item in items]}
 
 
 @app.get("/api/health")
