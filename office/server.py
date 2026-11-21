@@ -65,6 +65,8 @@ import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -773,6 +775,241 @@ def orchestrate(body: OrchestrateIn):
     entry = _log("human", f"Convene the council: {body.topic.strip()}")
     threading.Thread(target=_orchestrate, args=(body.topic.strip(), parts), daemon=True).start()
     return {"ok": True, "accepted": parts, "seq": entry["seq"]}
+
+
+# --- Agent lease desk (/lease/{record_id}) -----------------------------------
+# The Agent Store's trial handoff ("Open your agent's desk") points here:
+# agents.ansaitechnologies.co.ke/lease/<record-id>. The page is a customer
+# surface served by this office; the record itself stays in the Store. The
+# browser never talks to the Store directly — /api/lease/{id} fetches the
+# record server-side, forwarding ONLY the caller's own session cookies
+# (ansai_id_session, and as_session when present), and relays a SANITISED
+# projection: the fields the desk displays, nothing else. Renter PII,
+# answers, the audit trail, pricing internals and wallet snapshots never
+# cross. The Store's read is session-scoped, so a record the caller may not
+# see comes back from the Store as a 401/404 and is relayed as the same
+# plain not-found either way — the desk cannot leak that a record exists.
+# Both routes sit behind the Ansai ID gate above, exactly like /platform:
+# signed-out pages redirect to the sign-in, signed-out API calls get a 401.
+STORE_BASE = os.environ.get("AGENT_STORE_URL", "https://store.ansaitechnologies.co.ke")
+_STORE_TIMEOUT = 4  # seconds; the desk must fail fast and plainly, never hang
+
+# Store job id -> the name a customer knows it by (the Store's own job names).
+JOB_KIND_NAMES = {
+    "bookkeeper": "The Bookkeeper",
+    "shop": "The Shop Agent",
+    "bursar": "The Bursar",
+    "job-hunter": "The Job Hunter",
+    "outreach": "The Outreach Agent",
+}
+
+# Voice preset id -> display name, per template (the Store's job definitions
+# own these words; ids repeat across templates with different names, so the
+# map is keyed by job first). Unknown ids fall back to a title-cased id.
+VOICE_PRESET_NAMES = {
+    "bookkeeper": {"calm": "Calm & clear", "formal": "Formal & precise", "friendly": "Friendly & plain"},
+    "bursar": {"gentle": "Gentle & respectful", "formal": "Formal school voice", "brief": "Short & plain"},
+    "job-hunter": {"professional": "Steady & professional", "warm": "Warm & keen", "formal": "Formal & brief"},
+    "outreach": {"warm": "Warm & personal", "direct": "Short & direct", "formal": "Formal & proper"},
+    "shop": {"friendly": "Friendly shop voice", "neat": "Neat & orderly", "bright": "Bright & cheerful"},
+}
+
+# Evidence-pack trigger -> the plain words the desk uses for the statement.
+_PACK_LABELS = {
+    "trial_end": "End-of-trial statement",
+    "conversion": "Statement from joining in full",
+    "pause": "Statement from the pause",
+    "on_request": "Statement you asked for",
+}
+
+
+class _StoreMiss(Exception):
+    """The Store says this record is not there (or not this caller's to see)."""
+
+
+class _StoreDown(Exception):
+    """The Store could not be reached, or answered something unusable."""
+
+
+def _store_cookie_header(request: Request) -> str:
+    """Only the caller's own Store/ID session cookies cross to the Store."""
+    parts = []
+    for name in ("ansai_id_session", "as_session"):
+        val = request.cookies.get(name, "")
+        if val:
+            parts.append(f"{name}={val}")
+    return "; ".join(parts)
+
+
+def _fetch_store_record(record_id: str, cookie_header: str) -> dict:
+    """GET the lease record from the Store. Raises _StoreMiss / _StoreDown."""
+    url = STORE_BASE + "/api/provision?id=" + urllib.parse.quote(record_id, safe="")
+    headers = {"Accept": "application/json"}
+    if cookie_header:
+        headers["Cookie"] = cookie_header
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=_STORE_TIMEOUT) as res:
+            data = json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        # 401/403: the Store will not show this record to this caller —
+        # relay as not-found so existence is never leaked. 404 likewise.
+        if exc.code in (401, 403, 404):
+            raise _StoreMiss() from exc
+        raise _StoreDown() from exc
+    except Exception as exc:  # timeout, DNS, bad JSON on the error path
+        raise _StoreDown() from exc
+    record = data.get("record") if isinstance(data, dict) else None
+    if not isinstance(record, dict):
+        raise _StoreDown()
+    return record
+
+
+def _parse_iso(val):
+    if not val:
+        return None
+    try:
+        return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _lease_state(record: dict, now: datetime) -> dict:
+    """The lease state in plain words, from the record's status + trial clock."""
+    status = str(record.get("status") or "")
+    trial = record.get("trial") if isinstance(record.get("trial"), dict) else {}
+    if status == "trial_active":
+        started = _parse_iso(trial.get("startedAt"))
+        day = min(7, max(1, (now - started).days + 1)) if started else None
+        return {
+            "code": "trial",
+            "label": "On trial",
+            "detail": f"day {day} of 7" if day else "your free week is running",
+        }
+    if status == "provisioning":
+        return {"code": "setting_up", "label": "Setting up", "detail": "we are setting up your agent now"}
+    if status == "trial_expired":
+        return {"code": "trial_ended", "label": "Trial ended", "detail": "your free week has ended and your agent has stopped"}
+    if status == "converted":
+        return {"code": "active", "label": "Active", "detail": "paid for and working at the limits you set"}
+    if status == "paused":
+        return {"code": "paused", "label": "Paused", "detail": "paused because a payment was missed"}
+    if status == "closed":
+        return {"code": "closed", "label": "Closed", "detail": "this lease has ended"}
+    if status == "awaiting_payment":
+        return {"code": "not_started", "label": "Not started", "detail": "waiting for its first step"}
+    return {"code": "other", "label": "In progress", "detail": ""}
+
+
+def _lease_voice(record: dict, job_id: str):
+    """The voice profile line, when the record carries one (preset + count)."""
+    voice = record.get("voice")
+    if not isinstance(voice, dict):
+        spec = record.get("spec") if isinstance(record.get("spec"), dict) else {}
+        voice = spec.get("voice")
+    if not isinstance(voice, dict) or not voice.get("preset"):
+        return None
+    preset = str(voice["preset"])
+    name = VOICE_PRESET_NAMES.get(job_id, {}).get(preset)
+    if not name:
+        name = preset.replace("-", " ").replace("_", " ").title()
+    samples = voice.get("samples") if isinstance(voice.get("samples"), list) else []
+    return {
+        "presetName": name,
+        "sampleCount": len([s for s in samples if str(s).strip()]),
+    }
+
+
+def _lease_statements(record: dict) -> list:
+    """Evidence packs, projected to what the desk shows: label, period, totals."""
+    trial = record.get("trial") if isinstance(record.get("trial"), dict) else {}
+    packs = trial.get("packs") if isinstance(trial.get("packs"), list) else []
+    out = []
+    for pack in packs:
+        if not isinstance(pack, dict):
+            continue
+        period = pack.get("period") if isinstance(pack.get("period"), dict) else {}
+        totals = pack.get("totals") if isinstance(pack.get("totals"), dict) else {}
+        sig = pack.get("signature") if isinstance(pack.get("signature"), dict) else {}
+        out.append(
+            {
+                "label": _PACK_LABELS.get(str(pack.get("trigger") or ""), "Statement"),
+                "generatedAt": pack.get("generated_at"),
+                "from": period.get("from"),
+                "to": period.get("to"),
+                "actions": totals.get("actions"),
+                "approvalsAsked": totals.get("approvalsAsked"),
+                "walletMovedKes": totals.get("walletMovedKes"),
+                "ref": str(sig.get("hash") or "")[:16],
+            }
+        )
+    return out
+
+
+def _project_lease(record: dict) -> dict:
+    """The sanitised projection the desk renders. Nothing else crosses."""
+    job_id = str(record.get("jobId") or "")
+    spec = record.get("spec") if isinstance(record.get("spec"), dict) else {}
+    identity = spec.get("identity") if isinstance(spec.get("identity"), dict) else {}
+    policy = spec.get("policy") if isinstance(spec.get("policy"), dict) else {}
+    wallet = spec.get("wallet") if isinstance(spec.get("wallet"), dict) else {}
+    trial = record.get("trial") if isinstance(record.get("trial"), dict) else {}
+    return {
+        "ok": True,
+        "id": str(record.get("id") or ""),
+        "kind": JOB_KIND_NAMES.get(job_id)
+        or (job_id.replace("-", " ").title() if job_id else "Your agent"),
+        "agentName": str(identity.get("name") or ""),
+        "purpose": str(identity.get("purpose") or ""),
+        "state": _lease_state(record, datetime.now(timezone.utc)),
+        "trialEndsAt": trial.get("endsAt"),
+        "recordsUntil": trial.get("retentionUntil"),
+        "wallet": {
+            "perTxnCapKes": wallet.get("per_txn_cap"),
+            "dailyCap": wallet.get("daily_cap"),
+            "dailyCapUnit": wallet.get("daily_cap_unit") or "KES/day",
+            "approvalThresholdKes": wallet.get("approval_threshold_kes"),
+            "allowedPayees": [str(p) for p in (wallet.get("allowed_payees") or [])][:12],
+        },
+        "guardrails": {
+            "may": [str(x) for x in (policy.get("may") or [])],
+            "mustApprove": [str(x) for x in (policy.get("must_approve") or [])],
+            "never": [str(x) for x in (policy.get("never") or [])],
+        },
+        "voice": _lease_voice(record, job_id),
+        "statements": _lease_statements(record),
+        "createdAt": record.get("createdAt"),
+    }
+
+
+@app.get("/lease/{record_id}")
+def lease_page(record_id: str):
+    return FileResponse(os.path.join(STATIC_DIR, "lease.html"), media_type="text/html")
+
+
+@app.get("/api/lease/{record_id}")
+def lease_record(record_id: str, request: Request):
+    try:
+        record = _fetch_store_record(record_id, _store_cookie_header(request))
+    except _StoreMiss:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "not_found",
+                "message": "We couldn't find that agent — it may have been closed, or the link is incomplete.",
+            },
+            status_code=404,
+        )
+    except _StoreDown:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "store_unreachable",
+                "message": "We couldn't reach the Agent Store just now. Please try again in a moment.",
+            },
+            status_code=502,
+        )
+    return _project_lease(record)
 
 
 @app.get("/api/health")
