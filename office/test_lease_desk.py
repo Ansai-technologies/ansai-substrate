@@ -200,10 +200,13 @@ def test_lease_api_returns_sanitised_projection(monkeypatch):
     assert pack["approvalsAsked"] == 2
     assert pack["walletMovedKes"] == 4500
     assert pack["ref"] == "f00df00df00df00d"
-    # Exactly the projection's keys — nothing else crosses.
+    # Exactly the projection's keys — nothing else crosses. ("instance" is
+    # the factory handshake's own object, added by the handshake slice;
+    # its contents are pinned in test_factory_handshake.py.)
     assert set(data.keys()) == {
         "ok", "id", "kind", "agentName", "purpose", "state", "trialEndsAt",
         "recordsUntil", "wallet", "guardrails", "voice", "statements", "createdAt",
+        "instance",
     }
 
 
