@@ -59,6 +59,7 @@ Run:  uvicorn office.server:app --host 127.0.0.1 --port 8080   (from repo root)
 
 import asyncio
 import base64
+import hashlib
 import importlib.util
 import json
 import os
@@ -987,6 +988,156 @@ def lease_page(record_id: str):
     return FileResponse(os.path.join(STATIC_DIR, "lease.html"), media_type="text/html")
 
 
+# --- The factory handshake: seating the agent on the platform -----------------
+# The desk above DISPLAYS the lease; this is where the platform takes the
+# record's spec and seats the agent. The Store record carries the template's
+# specifications (wallet caps, guardrails, voice) from the customer's setup.
+# When a lease is live (trial running, or converted to a paid lease), the
+# first desk read materialises an INSTANCE here: the platform's own copy of
+# the spec it seated the agent from, keyed by Store record id and persisted
+# beside the chat log (office/lease_instances.json, created on first use).
+# Later reads are idempotent — an unchanged record changes nothing; a
+# changed spec reseats the instance in place (same created_at, new
+# spec_hash + updated_at, noted in the shared log). When the record's
+# lifecycle ends, the instance mirrors it: trial ended -> "returned",
+# lease closed -> "closed". Materialisation runs ONLY after a successful
+# Store fetch + projection — a failed fetch never creates or changes an
+# instance, and the desk's error behaviour is untouched. The spec is
+# derived ONLY from the sanitised projection, so nothing crosses that the
+# desk does not already show. The agent's work loop (executing errands
+# with tools) is the next slice; this slice is the handshake only.
+LEASE_INSTANCES_PATH = os.path.join(HERE, "lease_instances.json")
+_instances: dict = {}
+_instances_lock = threading.Lock()
+
+# Projection state code -> instance status. "trial"/"active" are the live
+# lease states; the two ended states mirror the lease's end.
+_INSTANCE_LIVE = {"trial": "seated", "active": "seated"}
+_INSTANCE_ENDED = {"trial_ended": "returned", "closed": "closed"}
+
+
+def _load_instances() -> None:
+    """Restore seated instances from disk at startup."""
+    if not os.path.exists(LEASE_INSTANCES_PATH):
+        return
+    try:
+        with open(LEASE_INSTANCES_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return  # a corrupt store must never stop the office booting
+    if isinstance(data, dict):
+        _instances.update({k: v for k, v in data.items() if isinstance(v, dict)})
+
+
+def _save_instances() -> None:
+    """Persist the instance store (tmp + replace, so a crash mid-write
+    cannot corrupt it). Disk trouble must never break the desk."""
+    try:
+        tmp = LEASE_INSTANCES_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(_instances, f, ensure_ascii=False, indent=1, sort_keys=True)
+        os.replace(tmp, LEASE_INSTANCES_PATH)
+    except Exception:
+        pass
+
+
+_load_instances()
+
+
+def _instance_spec(projection: dict) -> dict:
+    """The spec the platform seats the agent from — the projection's own
+    wallet caps, guardrails and voice summary, nothing else."""
+    wallet = projection.get("wallet") or {}
+    return {
+        "wallet": {
+            "perTxnCapKes": wallet.get("perTxnCapKes"),
+            "dailyCap": wallet.get("dailyCap"),
+            "dailyCapUnit": wallet.get("dailyCapUnit"),
+            "approvalThresholdKes": wallet.get("approvalThresholdKes"),
+            "allowedPayees": list(wallet.get("allowedPayees") or []),
+        },
+        "guardrails": projection.get("guardrails")
+        or {"may": [], "mustApprove": [], "never": []},
+        "voice": projection.get("voice"),
+    }
+
+
+def _spec_hash(spec: dict) -> str:
+    canonical = json.dumps(
+        spec, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _materialise_instance(record: dict, projection: dict):
+    """Seat the agent from the record's spec, or mirror the lease's end.
+
+    Returns the instance (a copy) or None when the lease has not
+    activated and no instance exists. Idempotent per record."""
+    record_id = str(record.get("id") or "")
+    if not record_id:
+        return None
+    code = (projection.get("state") or {}).get("code", "")
+    with _instances_lock:
+        inst = _instances.get(record_id)
+        if code in _INSTANCE_LIVE:
+            spec = _instance_spec(projection)
+            digest = _spec_hash(spec)
+            now = _now()
+            name = projection.get("agentName") or record_id
+            if inst is None:
+                inst = {
+                    "record_id": record_id,
+                    "template": str(record.get("jobId") or ""),
+                    "agent_name": projection.get("agentName") or "",
+                    "status": _INSTANCE_LIVE[code],
+                    "spec": spec,
+                    "spec_hash": digest,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                _instances[record_id] = inst
+                _save_instances()
+                _log(
+                    "system",
+                    f"Factory: {name} seated on the platform from its Store "
+                    f"lease (setup {digest[:8]}).",
+                )
+            else:
+                changed = False
+                if inst.get("spec_hash") != digest:
+                    inst["spec"] = spec
+                    inst["spec_hash"] = digest
+                    changed = True
+                if inst.get("status") != _INSTANCE_LIVE[code]:
+                    inst["status"] = _INSTANCE_LIVE[code]
+                    changed = True
+                if changed:
+                    inst["updated_at"] = now
+                    _save_instances()
+                    _log(
+                        "system",
+                        f"Factory: {name}'s setup changed in the Store — "
+                        f"reseated at setup {digest[:8]}.",
+                    )
+            return dict(inst)
+        if inst is not None and code in _INSTANCE_ENDED:
+            ended = _INSTANCE_ENDED[code]
+            if inst.get("status") != ended:
+                inst["status"] = ended
+                inst["updated_at"] = _now()
+                _save_instances()
+                name = inst.get("agent_name") or record_id
+                _log(
+                    "system",
+                    f"Factory: {name}'s lease ended — the agent has been {ended}.",
+                )
+            return dict(inst)
+        # Not live, never seated (or live lease paused mid-flight): an
+        # existing instance stands as it is; otherwise there is none.
+        return dict(inst) if inst is not None else None
+
+
 @app.get("/api/lease/{record_id}")
 def lease_record(record_id: str, request: Request):
     try:
@@ -1009,7 +1160,11 @@ def lease_record(record_id: str, request: Request):
             },
             status_code=502,
         )
-    return _project_lease(record)
+    projection = _project_lease(record)
+    # The factory handshake: a live lease seats its agent on the platform
+    # (see _materialise_instance). Only a successful fetch reaches here.
+    projection["instance"] = _materialise_instance(record, projection)
+    return projection
 
 
 @app.get("/api/health")

@@ -16,3 +16,5 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 office/chat-log.jsonl
+office/lease_instances.json
+office/lease_instances.json.tmp
